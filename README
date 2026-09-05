@@ -1,0 +1,93 @@
+# U-Boot for RK3568 NAS Lite
+
+这是面向 Rockchip RK3568 NAS Lite 目标设备的 U-Boot 源码，基于
+`orangepi-xunlong/u-boot-orangepi`，加入了 NAS Lite 的默认配置和设备树。
+
+## 目标设备
+
+目标设备来自 Armbian 的 `nas-lite.csc` 配置，不是本项目使用的编译主机：
+
+| 项目 | 目标配置 |
+| --- | --- |
+| 目标名称 | `nas-lite` |
+| SoC | Rockchip RK3568 |
+| 内存配置 | 4 GB RAM |
+| 存储/接口描述 | NVMe、eMMC、USB 2.0、USB 3.0、SATA |
+| U-Boot 配置 | `rk3568-nas-lite_defconfig` |
+| 默认设备树 | `rockchip/rk3568-nas-lite.dtb` |
+| 镜像分区表 | GPT |
+| 启动场景 | SPL + Rockchip 固件 |
+
+这里的目标硬件信息来自板级构建配置。当前没有在目标 NAS Lite 实物上完成启动、存储和接口逐项验证，因此不能把编译主机的硬件信息当作目标板信息。
+
+## 编译环境
+
+本项目使用一台独立设备进行编译。该设备仅作为编译主机，不是 U-Boot 的目标设备：
+
+| 项目 | 编译主机实测信息 |
+| --- | --- |
+| 设备树型号 | `OEC BOX WXY4` |
+| 架构 | AArch64 |
+| CPU | 4 x ARM Cortex-A55 |
+| CPU 频率 | 408 MHz - 1800 MHz |
+| 内存 | 约 4 GB（Linux 可用 3.8 GiB） |
+| 系统 | Armbian，Linux `6.1.141-rk35xx-ophub` |
+| 编译器 | `aarch64-linux-gnu-gcc` |
+
+编译主机上的 SATA 和 eMMC 仅用于存放源码、构建目录及其他系统数据，与目标 NAS Lite 的存储配置无关。
+
+## 源码与板级支持
+
+- U-Boot 基线提交：`752ac3f2fdcfe9427ca8868d95025aacd48fc00b`
+- 默认配置：`configs/rk3568-nas-lite_defconfig`
+- 设备树：`arch/arm/dts/rk3568-nas-lite.dts`
+- 公共 U-Boot 设备树修改：`arch/arm/dts/rk3568-u-boot.dtsi`
+- 默认设备树：`rk3568-nas-lite`
+- Rockchip SoC：`RK3568`
+
+## 编译
+
+在 Linux/AArch64 交叉编译环境中执行：
+
+```bash
+make rk3568-nas-lite_defconfig
+make KCFLAGS=-Wno-error -j$(nproc)
+```
+
+`KCFLAGS=-Wno-error` 用于兼容较新的 GCC。该 U-Boot 版本中的部分旧代码会触发
+新 GCC 的警告升级错误，例如 `common/edid.c`、`common/command.c` 和
+`drivers/mmc/rockchip_dw_mmc.c`。
+
+## 已验证的编译产物
+
+当前配置已在编译主机上完成编译。编译成功只说明源码和配置可以生成镜像，不代表已经在目标 NAS Lite 实物上完成启动验证。
+
+```text
+u-boot.bin                 约 1.3 MiB
+u-boot.img                 约 1.4 MiB
+u-boot-dtb.img             约 1.4 MiB
+spl/u-boot-spl.bin         约 230 KiB
+arch/arm/dts/rk3568-nas-lite.dtb
+```
+
+编译配置确认如下：
+
+```text
+CONFIG_DEFAULT_DEVICE_TREE="rk3568-nas-lite"
+```
+
+## 固件依赖
+
+Armbian 板级配置中使用的 DDR 和 BL31 固件名称为：
+
+```text
+rk35/rk3568_ddr_1056MHz_v1.13.bin
+rk35/rk3568_bl31_v1.33.elf
+```
+
+本项目仅包含 U-Boot 源码和板级支持，不包含上述二进制固件。刷写前请确认 DDR、BL31、启动介质和分区布局与实际目标板匹配。
+
+## 相关项目
+
+- [Armbian NAS Lite 配置](https://github.com/alerice/armbian-build/blob/main/config/boards/nas-lite.csc)
+- [Orange Pi U-Boot 基线](https://github.com/orangepi-xunlong/u-boot-orangepi)
