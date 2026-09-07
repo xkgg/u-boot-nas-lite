@@ -2,6 +2,7 @@
 
 这是面向 Rockchip RK3568 NAS Lite 目标设备的 U-Boot 源码，基于
 `orangepi-xunlong/u-boot-orangepi`，加入了 NAS Lite 的默认配置和设备树。
+当前默认板级源码与 2026-09-07 通过 Armbian 流程成功编译的工作树一致。
 
 ## 目标设备
 
@@ -45,6 +46,9 @@
 - 默认设备树：`rk3568-nas-lite`
 - Rockchip SoC：`RK3568`
 
+仓库中保留了后续 DG Linux 设备树适配所需的依赖文件，但默认
+`rk3568-nas-lite.dts` 使用本次实际编译通过的 Armbian NAS Lite 版本。
+
 ## 编译
 
 在 Linux/AArch64 交叉编译环境中执行：
@@ -58,17 +62,46 @@ make KCFLAGS=-Wno-error -j$(nproc)
 新 GCC 的警告升级错误，例如 `common/edid.c`、`common/command.c` 和
 `drivers/mmc/rockchip_dw_mmc.c`。
 
+### Armbian 流程
+
+本次生成 `idbloader.img` 使用的是 `alerice/armbian-build` 的 `nas-lite` 板级流程。
+在 Armbian Build 仓库中安装本项目附带的 GCC 13 兼容扩展：
+
+```bash
+mkdir -p userpatches/extensions
+cp /path/to/u-boot-nas-lite/contrib/armbian/nas-lite-gcc13-compat.sh \
+  userpatches/extensions/
+
+ALLOW_ROOT=yes COLUMNS=160 ENABLE_EXTENSIONS=nas-lite-gcc13-compat \
+  DEBIAN_FRONTEND=noninteractive \
+  ./compile.sh uboot BOARD=nas-lite BRANCH=vendor ARTIFACT_IGNORE_CACHE=yes
+```
+
+`ALLOW_ROOT=yes` 只在使用 root 构建时需要。普通用户运行时可以省略。
+
 ## 已验证的编译产物
 
-当前配置已在编译主机上完成编译。编译成功只说明源码和配置可以生成镜像，不代表已经在目标 NAS Lite 实物上完成启动验证。
+当前配置已在编译主机上完成 Armbian U-Boot 编译和打包。编译成功只说明源码和配置可以生成镜像，不代表已经在目标 NAS Lite 实物上完成启动验证。
 
 ```text
-u-boot.bin                 约 1.3 MiB
-u-boot.img                 约 1.4 MiB
-u-boot-dtb.img             约 1.4 MiB
-spl/u-boot-spl.bin         约 230 KiB
-arch/arm/dts/rk3568-nas-lite.dtb
+idbloader.img    296960 bytes
+u-boot.itb      1548288 bytes
 ```
+
+SHA-256：
+
+```text
+e0fe8ab7d4a0c6dcd304a2a3bac46a0924b893cd1a836aa2410e8fe7291a49bb  idbloader.img
+6de50ef4b5f8d3aa27e2b9d4ae7ce1bbe38f1ba2e26ae84f93065c114e4e77e2  u-boot.itb
+```
+
+Armbian 软件包名称：
+
+```text
+linux-u-boot-nas-lite-vendor_24.11.0-trunk_arm64__2017.09-S752a-P8d10-Hd763-V46d3-Bda0a-R448a.deb
+```
+
+GitHub 仓库只提交源码和构建说明，不提交本次生成的二进制文件。
 
 编译配置确认如下：
 
