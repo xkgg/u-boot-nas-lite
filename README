@@ -45,9 +45,33 @@
 - 公共 U-Boot 设备树修改：`arch/arm/dts/rk3568-u-boot.dtsi`
 - 默认设备树：`rk3568-nas-lite`
 - Rockchip SoC：`RK3568`
+- OP-TEE 客户端：关闭（当前启动链未打包兼容的 BL32/OP-TEE）
 
 仓库中保留了后续 DG Linux 设备树适配所需的依赖文件，但默认
 `rk3568-nas-lite.dts` 使用本次实际编译通过的 Armbian NAS Lite 版本。
+
+## OP-TEE 停机修复
+
+旧配置启用了 U-Boot OP-TEE 客户端，但当前构建使用的
+`rk3568_bl31_v1.33.elf` 没有可供它调用的兼容 BL32/OP-TEE。Linux 启动项未找到后，
+Android 回退流程会检查 OP-TEE API，随后输出以下致命错误并执行 `panic`：
+
+```text
+optee check api revision fail: -1.0
+optee api revision is too low
+### ERROR ### Please RESET the board
+```
+
+NAS Lite 默认配置现已关闭该客户端：
+
+```text
+# CONFIG_OPTEE_CLIENT is not set
+```
+
+这会移除上述强制停机路径。日志中的 `No ethernet found`、PXE 配置搜索以及
+`Could not find misc partition` 属于后续启动目标探测信息；如果本地介质仍未启动，
+还需要继续检查 MMC 设备、分区、`extlinux.conf` 和内核文件，不能通过启用 OP-TEE
+来解决。
 
 ## 编译
 
@@ -69,8 +93,11 @@ make KCFLAGS=-Wno-error -j$(nproc)
 
 ```bash
 mkdir -p userpatches/extensions
+mkdir -p userpatches/u-boot/v2017.09-rk3588-nas-lite
 cp /path/to/u-boot-nas-lite/contrib/armbian/nas-lite-gcc13-compat.sh \
   userpatches/extensions/
+cp /path/to/u-boot-nas-lite/contrib/armbian/u-boot-rk35xx-legacy-001-add-nas-lite.patch \
+  userpatches/u-boot/v2017.09-rk3588-nas-lite/
 
 ALLOW_ROOT=yes COLUMNS=160 ENABLE_EXTENSIONS=nas-lite-gcc13-compat \
   DEBIAN_FRONTEND=noninteractive \
@@ -85,20 +112,20 @@ ALLOW_ROOT=yes COLUMNS=160 ENABLE_EXTENSIONS=nas-lite-gcc13-compat \
 
 ```text
 idbloader.img    296960 bytes
-u-boot.itb      1548288 bytes
+u-boot.itb      1509888 bytes
 ```
 
 SHA-256：
 
 ```text
-e0fe8ab7d4a0c6dcd304a2a3bac46a0924b893cd1a836aa2410e8fe7291a49bb  idbloader.img
-6de50ef4b5f8d3aa27e2b9d4ae7ce1bbe38f1ba2e26ae84f93065c114e4e77e2  u-boot.itb
+f88645dfc82b26ede7d3105d08a895c936a95ad25cbacad87f25d53da4e6df4a  idbloader.img
+b85f05fee5b459aedb3f5650737619bc3d58984496c5ec7befb0baa51e7e2a1e  u-boot.itb
 ```
 
 Armbian 软件包名称：
 
 ```text
-linux-u-boot-nas-lite-vendor_24.11.0-trunk_arm64__2017.09-S752a-P8d10-Hd763-V46d3-Bda0a-R448a.deb
+linux-u-boot-nas-lite-vendor_24.11.0-trunk_arm64__2017.09-S752a-Pb4ab-Hd763-V46d3-Bda0a-R448a.deb
 ```
 
 GitHub 仓库只提交源码和构建说明，不提交本次生成的二进制文件。
@@ -107,6 +134,7 @@ GitHub 仓库只提交源码和构建说明，不提交本次生成的二进制�
 
 ```text
 CONFIG_DEFAULT_DEVICE_TREE="rk3568-nas-lite"
+# CONFIG_OPTEE_CLIENT is not set
 ```
 
 ## 固件依赖
