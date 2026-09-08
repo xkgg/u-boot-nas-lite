@@ -1,12 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Mem setup common file for different types of DDR present on Exynos boards.
  *
  * Copyright (C) 2012 Samsung Electronics
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <linux/types.h>
 #include <asm/arch/spl.h>
 
 #include "clock_init.h"

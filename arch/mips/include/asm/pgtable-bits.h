@@ -1,13 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 1994 - 2002 by Ralf Baechle
  * Copyright (C) 1999, 2000, 2001 Silicon Graphics, Inc.
  * Copyright (C) 2002  Maciej W. Rozycki
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 #ifndef _ASM_PGTABLE_BITS_H
 #define _ASM_PGTABLE_BITS_H
-
 
 /*
  * Note that we shift the lower 32bits of each EntryLo[01] entry
@@ -189,7 +187,6 @@
  *   64-bit, R2 or later:       CCC D V G RI/R XI [S H] M A W P
  *   32-bit, R2 or later:       CCC D V G RI/R XI M A W P
  */
-
 
 #ifndef __ASSEMBLY__
 /*

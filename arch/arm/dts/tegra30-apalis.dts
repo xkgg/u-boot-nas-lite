@@ -15,9 +15,9 @@
 		i2c1 = "/i2c@7000c000";
 		i2c2 = "/i2c@7000c500";
 		i2c3 = "/i2c@7000c700";
-		mmc0 = "/sdhci@78000600";
-		mmc1 = "/sdhci@78000400";
-		mmc2 = "/sdhci@78000000";
+		mmc0 = "/mmc@78000600";
+		mmc1 = "/mmc@78000400";
+		mmc2 = "/mmc@78000000";
 		spi0 = "/spi@7000d400";
 		spi1 = "/spi@7000dc00";
 		spi2 = "/spi@7000de00";
@@ -32,7 +32,7 @@
 		reg = <0x80000000 0x40000000>;
 	};
 
-	pcie-controller@00003000 {
+	pcie@3000 {
 		status = "okay";
 		avdd-pexa-supply = <&vdd2_reg>;
 		vdd-pexa-supply = <&vdd2_reg>;
@@ -43,16 +43,19 @@
 		vddio-pex-ctl-supply = <&sys_3v3_reg>;
 		hvdd-pex-supply = <&sys_3v3_reg>;
 
+		/* Apalis Type Specific 4 Lane PCIe */
 		pci@1,0 {
 			/* TS_DIFF1/2/3/4 left disabled */
 			nvidia,num-lanes = <4>;
 		};
 
+		/* Apalis PCIe */
 		pci@2,0 {
 			/* PCIE1_RX/TX left disabled */
 			nvidia,num-lanes = <1>;
 		};
 
+		/* I210 Gigabit Ethernet Controller (On-module) */
 		pci@3,0 {
 			status = "okay";
 			nvidia,num-lanes = <1>;
@@ -116,9 +119,6 @@
 			vccio-supply = <&sys_3v3_reg>;
 
 			regulators {
-				#address-cells = <1>;
-				#size-cells = <0>;
-
 				/* SW1: +V1.35_VDDIO_DDR */
 				vdd1_reg: vdd1 {
 					regulator-name = "vddio_ddr_1v35";
@@ -246,21 +246,21 @@
 		spi-max-frequency = <25000000>;
 	};
 
-	sdhci@78000000 {
+	mmc@78000000 {
 		status = "okay";
 		bus-width = <4>;
 		/* SD1_CD# */
 		cd-gpios = <&gpio TEGRA_GPIO(CC, 5) GPIO_ACTIVE_LOW>;
 	};
 
-	sdhci@78000400 {
+	mmc@78000400 {
 		status = "okay";
 		bus-width = <8>;
 		/* MMC1_CD# */
 		cd-gpios = <&gpio TEGRA_GPIO(V, 3) GPIO_ACTIVE_LOW>;
 	};
 
-	sdhci@78000600 {
+	mmc@78000600 {
 		status = "okay";
 		bus-width = <8>;
 		non-removable;

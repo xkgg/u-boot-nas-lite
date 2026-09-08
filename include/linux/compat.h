@@ -1,11 +1,21 @@
 #ifndef _LINUX_COMPAT_H_
 #define _LINUX_COMPAT_H_
 
+#include <console.h>
+#include <cyclic.h>
+#include <log.h>
 #include <malloc.h>
+#include <time.h>
+
+#include <asm/processor.h>
+
 #include <linux/types.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
-#include <stacktrace.h>
+
+#ifdef CONFIG_XEN
+#include <xen/events.h>
+#endif
 
 struct unused {};
 typedef struct unused unused_t;
@@ -15,34 +25,6 @@ struct p_current{
 };
 
 extern struct p_current *current;
-
-/* avoid conflict with <dm/device.h> */
-#ifdef dev_dbg
-#undef dev_dbg
-#endif
-#ifdef dev_vdbg
-#undef dev_vdbg
-#endif
-#ifdef dev_info
-#undef dev_info
-#endif
-#ifdef dev_err
-#undef dev_err
-#endif
-#ifdef dev_warn
-#undef dev_warn
-#endif
-
-#define dev_dbg(dev, fmt, args...)		\
-	debug(fmt, ##args)
-#define dev_vdbg(dev, fmt, args...)		\
-	debug(fmt, ##args)
-#define dev_info(dev, fmt, args...)		\
-	printf(fmt, ##args)
-#define dev_err(dev, fmt, args...)		\
-	printf(fmt, ##args)
-#define dev_warn(dev, fmt, args...)		\
-	printf(fmt, ##args)
 
 #define GFP_ATOMIC ((gfp_t) 0)
 #define GFP_KERNEL ((gfp_t) 0)
@@ -85,6 +67,19 @@ static inline void vfree(const void *addr)
 	free((void *)addr);
 }
 
+/**
+ * kstrdup_const - conditionally duplicate an existing const string
+ * @s: the string to duplicate
+ * @gfp: the GFP mask used in the kmalloc() call when allocating memory
+ *
+ * Note: Strings allocated by kstrdup_const should be freed by kfree_const and
+ * must not be passed to krealloc().
+ *
+ * Return: source string if it is in .rodata section otherwise
+ * fallback to kstrdup.
+ */
+#define kstrdup_const(s, gfp) strdup_const(s)
+
 struct kmem_cache { int sz; };
 
 struct kmem_cache *get_mem(int element_sz);
@@ -103,9 +98,58 @@ static inline void kmem_cache_destroy(struct kmem_cache *cachep)
 #define add_wait_queue(...)	do { } while (0)
 #define remove_wait_queue(...)	do { } while (0)
 
+#ifndef CONFIG_XEN
+#define eventchn_poll()
+#endif
+
+#define __wait_event_timeout(condition, timeout, ret)		\
+({								\
+	ulong __ret = ret; /* explicit shadow */		\
+	ulong start = get_timer(0);				\
+	for (;;) {						\
+		eventchn_poll();				\
+		if (condition) {				\
+			__ret = 1;				\
+			break;					\
+	}							\
+	if ((get_timer(start) > timeout) || ctrlc()) {		\
+		__ret = 0;					\
+		break;						\
+	}							\
+	cpu_relax();						\
+	}							\
+	__ret;							\
+})
+
+/**
+ * wait_event_timeout() - Wait until the event occurs before the timeout.
+ * @wr_head: The wait queue to wait on.
+ * @condition: Expression for the event to wait for.
+ * @timeout: Maximum waiting time.
+ *
+ * We wait until the @condition evaluates to %true (succeed) or
+ * %false (@timeout elapsed).
+ *
+ * Return:
+ * 0 - if the @condition evaluated to %false after the @timeout elapsed
+ * 1 - if the @condition evaluated to %true
+ */
+#define wait_event_timeout(wq_head, condition, timeout)			\
+({									\
+	ulong __ret;							\
+	if (condition)							\
+		__ret = 1;						\
+	else								\
+		__ret = __wait_event_timeout(condition, timeout, __ret);\
+	__ret;								\
+})
+
 #define KERNEL_VERSION(a,b,c)	(((a) << 16) + ((b) << 8) + (c))
 
+/* This is also defined in ARMv8's mmu.h */
+#ifndef PAGE_SIZE
 #define PAGE_SIZE	4096
+#endif
 
 /* drivers/char/random.c */
 #define get_random_bytes(...)
@@ -194,13 +238,13 @@ typedef unsigned long blkcnt_t;
 #define init_waitqueue_head(...)	do { } while (0)
 #define wait_event_interruptible(...)	0
 #define wake_up_interruptible(...)	do { } while (0)
+#define dump_stack(...)			do { } while (0)
 
 #define task_pid_nr(x)			0
 #define set_freezable(...)		do { } while (0)
 #define try_to_freeze(...)		0
 #define set_current_state(...)		do { } while (0)
 #define kthread_should_stop(...)	0
-#define schedule()			do { } while (0)
 
 #define setup_timer(timer, func, data) do {} while (0)
 #define del_timer_sync(timer) do {} while (0)
@@ -218,7 +262,7 @@ typedef int	wait_queue_head_t;
 #define spin_lock_init(lock) do {} while (0)
 #define spin_lock(lock) do {} while (0)
 #define spin_unlock(lock) do {} while (0)
-#define spin_lock_irqsave(lock, flags) do { debug("%lu\n", flags); } while (0)
+#define spin_lock_irqsave(lock, flags) do {} while (0)
 #define spin_unlock_irqrestore(lock, flags) do { flags = 0; } while (0)
 
 #define DEFINE_MUTEX(...)
@@ -241,6 +285,8 @@ typedef int	wait_queue_head_t;
 #define __devinit
 #define __devinitdata
 #define __devinitconst
+#define __initconst
+#define __initdata
 
 #define kthread_create(...)	__builtin_return_address(0)
 #define kthread_stop(...)	do { } while (0)

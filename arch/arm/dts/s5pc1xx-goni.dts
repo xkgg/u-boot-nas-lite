@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Samsung's S5PC110-based Goni board device tree source
  *
  * Copyright (c) 2014 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /dts-v1/;
@@ -46,7 +45,7 @@
 			compatible = "maxim,max8998";
 			reg = <0x66 0 0>;
 
-			voltage-regulators {
+			regulators {
 				ldo2_reg: LDO2 {
 					regulator-compatible = "LDO2";
 					regulator-name = "VALIVE_1.1V";

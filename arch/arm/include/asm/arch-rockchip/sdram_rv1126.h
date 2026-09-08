@@ -6,12 +6,12 @@
 #ifndef _ASM_ARCH_SDRAM_RK1126_H
 #define _ASM_ARCH_SDRAM_RK1126_H
 
-#include <asm/arch/dram_spec_timing.h>
-#include <asm/arch/sdram.h>
-#include <asm/arch/sdram_common.h>
-#include <asm/arch/sdram_msch.h>
-#include <asm/arch/sdram_pctl_px30.h>
-#include <asm/arch/sdram_phy_rv1126.h>
+#include <asm/arch-rockchip/dram_spec_timing.h>
+#include <asm/arch-rockchip/sdram.h>
+#include <asm/arch-rockchip/sdram_common.h>
+#include <asm/arch-rockchip/sdram_msch.h>
+#include <asm/arch-rockchip/sdram_pctl_px30.h>
+#include <asm/arch-rockchip/sdram_phy_rv1126.h>
 
 #define AGINGX0_VAL			(4)
 #define AGING_CPU_VAL			(0xff)
@@ -185,7 +185,7 @@
 
 /* DDR GRF */
 #define DDR_GRF_CON(n)			(0 + (n) * 4)
-#define DDR_GRF_STATUS_BASE		(0X100)
+#define DDR_GRF_STATUS_BASE		(0x100)
 #define DDR_GRF_STATUS(n)		(DDR_GRF_STATUS_BASE + (n) * 4)
 #define DDR_GRF_LP_CON			(0x20)
 

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2008 RuggedCom, Inc.
  * Richard Retanubun <RichardRetanubun@RuggedCom.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -19,12 +18,16 @@
 #define _DISK_PART_EFI_H
 
 #include <efi.h>
+#include <part_dos.h>
 
 #define MSDOS_MBR_SIGNATURE 0xAA55
+#define MSDOS_MBR_BOOT_CODE_SIZE 440
 #define EFI_PMBR_OSTYPE_EFI 0xEF
 #define EFI_PMBR_OSTYPE_EFI_GPT 0xEE
 
-#define GPT_HEADER_SIGNATURE 0x5452415020494645ULL
+#define GPT_HEADER_SIGNATURE_UBOOT 0x5452415020494645ULL // 'EFI PART'
+#define GPT_HEADER_CHROMEOS_IGNORE 0x454d45524f4e4749ULL // 'IGNOREME'
+
 #define GPT_HEADER_REVISION_V1 0x00010000
 #define GPT_PRIMARY_PARTITION_TABLE_LBA 1ULL
 #define GPT_ENTRY_NUMBERS		CONFIG_EFI_PARTITION_ENTRIES_NUMBERS
@@ -54,23 +57,29 @@
 #define PARTITION_LINUX_LVM_GUID \
 	EFI_GUID( 0xe6d6d379, 0xf507, 0x44c2, \
 		0xa2, 0x3c, 0x23, 0x8f, 0x2a, 0x3d, 0xf9, 0x28)
+#define PARTITION_U_BOOT_ENVIRONMENT \
+	EFI_GUID( 0x3de21764, 0x95bd, 0x54bd, \
+		0xa5, 0xc3, 0x4a, 0xbe, 0x78, 0x6f, 0x38, 0xa8)
+#define PARTITION_XBOOTLDR \
+	EFI_GUID( 0xbc13c2ff, 0x59e6, 0x4262, \
+		0xa3, 0x52, 0xb2, 0x75, 0xfd, 0x6f, 0x71, 0x72)
+
+/* Special ChromiumOS things */
+#define PARTITION_CROS_KERNEL \
+	EFI_GUID(0xfe3a2a5d, 0x4f32, 0x41a7, \
+		 0xb7, 0x25, 0xac, 0xcc, 0x32, 0x85, 0xa3, 0x09)
+#define PARTITION_CROS_ROOT \
+	EFI_GUID(0x3cb8e202, 0x3b7e, 0x47dd, \
+		 0x8a, 0x3c, 0x7f, 0xf2, 0xa1, 0x3c, 0xfc, 0xec)
+#define PARTITION_CROS_FIRMWARE \
+	EFI_GUID(0xcab6e88e, 0xabf3, 0x4102, \
+		 0xa0, 0x7a, 0xd4, 0xbb, 0x9b, 0xe3, 0xc1, 0xd3)
+#define PARTITION_CROS_RESERVED \
+	EFI_GUID(0x2e0a753d, 0x9e48, 0x43b0, \
+		 0x83, 0x37, 0xb1, 0x51, 0x92, 0xcb, 0x1b, 0x5e)
 
 /* linux/include/efi.h */
 typedef u16 efi_char16_t;
-
-/* based on linux/include/genhd.h */
-struct partition {
-	u8 boot_ind;		/* 0x80 - active */
-	u8 head;		/* starting head */
-	u8 sector;		/* starting sector */
-	u8 cyl;			/* starting cylinder */
-	u8 sys_ind;		/* What partition type */
-	u8 end_head;		/* end head */
-	u8 end_sector;		/* end sector */
-	u8 end_cyl;		/* end cylinder */
-	__le32 start_sect;	/* starting sector counting from 0 */
-	__le32 nr_sects;	/* nr of sectors in partition */
-} __packed;
 
 /* based on linux/fs/partitions/efi.h */
 typedef struct _gpt_header {
@@ -112,11 +121,31 @@ typedef struct _gpt_entry {
 } __packed gpt_entry;
 
 typedef struct _legacy_mbr {
-	u8 boot_code[440];
+	u8 boot_code[MSDOS_MBR_BOOT_CODE_SIZE];
 	__le32 unique_mbr_signature;
 	__le16 unknown;
-	struct partition partition_record[4];
+	dos_partition_t partition_record[4];
 	__le16 signature;
 } __packed legacy_mbr;
+
+#define EFI_PARTITION_INFO_PROTOCOL_GUID \
+	EFI_GUID(0x8cf2f62c, 0xbc9b, 0x4821, 0x80, \
+		 0x8d, 0xec, 0x9e, 0xc4, 0x21, 0xa1, 0xa0)
+
+#define EFI_PARTITION_INFO_PROTOCOL_REVISION 0x0001000
+#define PARTITION_TYPE_OTHER 0x00
+#define PARTITION_TYPE_MBR 0x01
+#define PARTITION_TYPE_GPT 0x02
+
+struct efi_partition_info {
+	u32 revision;
+	u32 type;
+	u8 system;
+	u8 reserved[7];
+	union {
+		dos_partition_t mbr;
+		gpt_entry gpt;
+	} info;
+} __packed;
 
 #endif	/* _DISK_PART_EFI_H */

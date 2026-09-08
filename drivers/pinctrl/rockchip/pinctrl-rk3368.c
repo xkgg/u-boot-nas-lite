@@ -3,8 +3,8 @@
  * (C) Copyright 2019 Rockchip Electronics Co., Ltd
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
 #include <dm/pinctrl.h>
 #include <regmap.h>
 #include <syscon.h>
@@ -152,10 +152,9 @@ static struct rockchip_pin_bank rk3368_pin_banks[] = {
 	PIN_BANK(3, 32, "gpio3"),
 };
 
-static struct rockchip_pin_ctrl rk3368_pin_ctrl = {
+static const struct rockchip_pin_ctrl rk3368_pin_ctrl = {
 	.pin_banks		= rk3368_pin_banks,
 	.nr_banks		= ARRAY_SIZE(rk3368_pin_banks),
-	.nr_pins		= 128,
 	.grf_mux_offset		= 0x0,
 	.pmu_mux_offset		= 0x0,
 	.set_mux		= rk3368_set_mux,
@@ -171,13 +170,13 @@ static const struct udevice_id rk3368_pinctrl_ids[] = {
 	{ }
 };
 
-U_BOOT_DRIVER(pinctrl_rk3368) = {
+U_BOOT_DRIVER(rockchip_rk3368_pinctrl) = {
 	.name		= "rockchip_rk3368_pinctrl",
 	.id		= UCLASS_PINCTRL,
 	.of_match	= rk3368_pinctrl_ids,
-	.priv_auto_alloc_size = sizeof(struct rockchip_pinctrl_priv),
+	.priv_auto	= sizeof(struct rockchip_pinctrl_priv),
 	.ops		= &rockchip_pinctrl_ops,
-#if !CONFIG_IS_ENABLED(OF_PLATDATA)
+#if CONFIG_IS_ENABLED(OF_REAL)
 	.bind		= dm_scan_fdt_dev,
 #endif
 	.probe		= rockchip_pinctrl_probe,

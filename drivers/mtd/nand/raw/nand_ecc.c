@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This file contains an ECC algorithm from Toshiba that detects and
  * corrects 1 bit errors in a 256 byte block of data.
@@ -8,8 +9,6 @@
  *                         Toshiba America Electronics Components, Inc.
  *
  * Copyright (C) 2006 Thomas Gleixner <tglx@linutronix.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * As a special exception, if other files instantiate templates or use
  * macros or inline functions from these files, or you compile these
@@ -22,8 +21,6 @@
  * This exception does not invalidate any other reasons why a work based on
  * this file might be covered by the GNU General Public License.
  */
-
-#include <common.h>
 
 #include <linux/errno.h>
 #include <linux/mtd/mtd.h>

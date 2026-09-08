@@ -1,6 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (c) 2014 Google, Inc
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __serial_pl01x_h
@@ -20,7 +20,11 @@ enum pl01x_type {
  * @skip_init: Don't attempt to change port configuration (also means @clock
  * is ignored)
  */
-struct pl01x_serial_platdata {
+#include <dt-structs.h>
+struct pl01x_serial_plat {
+#if CONFIG_IS_ENABLED(OF_PLATDATA)
+	struct dtd_serial_pl01x dtplat;
+#endif
 	unsigned long base;
 	enum pl01x_type type;
 	unsigned int clock;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * linux/arch/powerpc/kernel/traps.c
  *
@@ -8,15 +9,14 @@
  *
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
  * This file handles the architecture-dependent parts of hardware exceptions
  */
 
-#include <common.h>
+#include <vsprintf.h>
+#include <asm/ptrace.h>
 #include <command.h>
 #include <asm/processor.h>
 
@@ -52,7 +52,7 @@ static void print_backtrace(unsigned long *sp)
 	printf("\n");
 }
 
-static void show_regs(struct pt_regs *regs)
+void show_regs(struct pt_regs *regs)
 {
 	int i;
 
@@ -74,7 +74,6 @@ static void show_regs(struct pt_regs *regs)
 			printf("\n");
 	}
 }
-
 
 static void _exception(int signr, struct pt_regs *regs)
 {
@@ -141,7 +140,6 @@ void SoftEmuException(struct pt_regs *regs)
 	print_backtrace((unsigned long *)regs->gpr[1]);
 	panic("Software Emulation Exception");
 }
-
 
 void UnknownException(struct pt_regs *regs)
 {

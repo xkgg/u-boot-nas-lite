@@ -1,23 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Micrel PHY drivers
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Copyright 2010-2011 Freescale Semiconductor, Inc.
  * author Andy Fleming
  * (C) 2012 NetModule AG, David Andrey, added KSZ9031
  * (C) Copyright 2017 Adaptrum, Inc.
  * Written by Alexandru Gagniuc <alex.g@adaptrum.com> for Adaptrum, Inc.
+ * Copyright (C) 2025 Altera Corporation <www.altera.com>
  */
-
-#include <config.h>
-#include <common.h>
 #include <dm.h>
+#include <env.h>
 #include <errno.h>
 #include <micrel.h>
 #include <phy.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 /*
  * KSZ9021 - KSZ9031 common
@@ -38,9 +34,13 @@ DECLARE_GLOBAL_DATA_PTR;
 #define CTRL1000_CONFIG_MASTER		(1 << 11)
 #define CTRL1000_MANUAL_CONFIG		(1 << 12)
 
+#define KSZ9021_PS_TO_REG		120
+
 /* KSZ9031 PHY Registers */
 #define MII_KSZ9031_MMD_ACCES_CTRL	0x0d
 #define MII_KSZ9031_MMD_REG_DATA	0x0e
+
+#define KSZ9031_PS_TO_REG		60
 
 static int ksz90xx_startup(struct phy_device *phydev)
 {
@@ -68,7 +68,6 @@ static int ksz90xx_startup(struct phy_device *phydev)
 }
 
 /* Common OF config bits for KSZ9021 and KSZ9031 */
-#ifdef CONFIG_DM_ETH
 struct ksz90x1_reg_field {
 	const char	*name;
 	const u8	size;	/* Size of the bitfield, in bits */
@@ -107,20 +106,40 @@ static const struct ksz90x1_reg_field ksz9031_clk_grp[] = {
 };
 
 static int ksz90x1_of_config_group(struct phy_device *phydev,
-				   struct ksz90x1_ofcfg *ofcfg)
+				   struct ksz90x1_ofcfg *ofcfg,
+				   int ps_to_regval)
 {
 	struct udevice *dev = phydev->dev;
 	struct phy_driver *drv = phydev->drv;
-	const int ps_to_regval = 60;
+	struct ofnode_phandle_args phandle;
 	int val[4];
 	int i, changed = 0, offset, max;
 	u16 regval = 0;
+	ofnode node;
 
 	if (!drv || !drv->writeext)
 		return -EOPNOTSUPP;
 
+	node = phydev->node;
+
+	if (!ofnode_valid(node)) {
+		/* Look for a PHY node under the Ethernet node */
+		node = dev_read_subnode(dev, "ethernet-phy");
+	}
+
+	if (!ofnode_valid(node)) {
+		if (dev_read_phandle_with_args(dev, "phy-handle", NULL, 0, 0,
+					       &phandle)) {
+			/* No phy-handle found, look in the Ethernet node */
+			node = dev_ofnode(dev);
+		} else {
+			/* phy-handle found */
+			node = phandle.node;
+		}
+	}
+
 	for (i = 0; i < ofcfg->grpsz; i++) {
-		val[i] = dev_read_u32_default(dev, ofcfg->grp[i].name, ~0);
+		val[i] = ofnode_read_u32_default(node, ofcfg->grp[i].name, ~0);
 		offset = ofcfg->grp[i].off;
 		if (val[i] == -1) {
 			/* Default register value for KSZ9021 */
@@ -128,8 +147,8 @@ static int ksz90x1_of_config_group(struct phy_device *phydev,
 		} else {
 			changed = 1;	/* Value was changed in OF */
 			/* Calculate the register value and fix corner cases */
-			if (val[i] > ps_to_regval * 0xf) {
-				max = (1 << ofcfg->grp[i].size) - 1;
+			max = (1 << ofcfg->grp[i].size) - 1;
+			if (val[i] > ps_to_regval * max) {
 				regval |= max << offset;
 			} else {
 				regval |= (val[i] / ps_to_regval) << offset;
@@ -153,7 +172,8 @@ static int ksz9021_of_config(struct phy_device *phydev)
 	int i, ret = 0;
 
 	for (i = 0; i < ARRAY_SIZE(ofcfg); i++) {
-		ret = ksz90x1_of_config_group(phydev, &(ofcfg[i]));
+		ret = ksz90x1_of_config_group(phydev, &ofcfg[i],
+					      KSZ9021_PS_TO_REG);
 		if (ret)
 			return ret;
 	}
@@ -169,15 +189,51 @@ static int ksz9031_of_config(struct phy_device *phydev)
 		{ MII_KSZ9031_EXT_RGMII_TX_DATA_SKEW, 2, ksz90x1_txd_grp, 4 },
 		{ MII_KSZ9031_EXT_RGMII_CLOCK_SKEW, 2, ksz9031_clk_grp, 2 },
 	};
+	const unsigned int master = CTRL1000_CONFIG_MASTER | CTRL1000_MANUAL_CONFIG;
+	struct udevice *dev = phydev->dev;
 	int i, ret = 0;
+	ofnode node;
 
 	for (i = 0; i < ARRAY_SIZE(ofcfg); i++) {
-		ret = ksz90x1_of_config_group(phydev, &(ofcfg[i]));
+		ret = ksz90x1_of_config_group(phydev, &ofcfg[i],
+					      KSZ9031_PS_TO_REG);
 		if (ret)
 			return ret;
 	}
 
-	return 0;
+	node = phydev->node;
+
+	/* Look for a PHY node under the Ethernet node */
+	if (!ofnode_valid(node))
+		node = dev_read_subnode(dev, "ethernet-phy");
+
+	/* No node found, look in the Ethernet node */
+	if (!ofnode_valid(node))
+		node = dev_ofnode(dev);
+
+	/* Silicon Errata Sheet (DS80000691D or DS80000692D):
+	 * When the device links in the 1000BASE-T slave mode only,
+	 * the optional 125MHz reference output clock (CLK125_NDO)
+	 * has wide duty cycle variation.
+	 *
+	 * The optional CLK125_NDO clock does not meet the RGMII
+	 * 45/55 percent (min/max) duty cycle requirement and therefore
+	 * cannot be used directly by the MAC side for clocking
+	 * applications that have setup/hold time requirements on
+	 * rising and falling clock edges.
+	 *
+	 * Workaround:
+	 * Force the phy to be the master to receive a stable clock
+	 * which meets the duty cycle requirement.
+	 */
+	if (ofnode_read_bool(node, "micrel,force-master")) {
+		ret = phy_modify(phydev, MDIO_DEVAD_NONE, MII_CTRL1000,
+				 master | CTRL1000_PREFER_MASTER, master);
+		if (ret < 0)
+			pr_err("KSZ9031: error applying 'micrel,force-master'\n");
+	}
+
+	return ret;
 }
 
 static int ksz9031_center_flp_timing(struct phy_device *phydev)
@@ -196,22 +252,30 @@ static int ksz9031_center_flp_timing(struct phy_device *phydev)
 	return ret;
 }
 
-#else /* !CONFIG_DM_ETH */
-static int ksz9021_of_config(struct phy_device *phydev)
+static void ksz90x1_workaround_asymmetric_pause(struct phy_device *phydev)
 {
-	return 0;
-}
+	u32 features = phydev->drv->features;
 
-static int ksz9031_of_config(struct phy_device *phydev)
-{
-	return 0;
-}
+	/* Silicon Errata Sheet (DS80000691D or DS80000692D):
+	 * Whenever the device's Asymmetric Pause capability is set to 1,
+	 * link-up may fail after a link-up to link-down transition.
+	 *
+	 * The Errata Sheet is for ksz9031, but ksz9021 has the same issue
+	 *
+	 * Workaround:
+	 * Do not enable the Asymmetric Pause capability bit.
+	 */
+	features &= ~ADVERTISE_PAUSE_ASYM;
 
-static int ksz9031_center_flp_timing(struct phy_device *phydev)
-{
-	return 0;
+	/* We force setting the Pause capability as the core will force the
+	 * Asymmetric Pause capability to 1 otherwise.
+	 */
+	features |= ADVERTISE_PAUSE_CAP;
+
+	/* update feature support and forward to advertised features */
+	phydev->supported = features;
+	phydev->advertising = phydev->supported;
 }
-#endif
 
 /*
  * KSZ9021
@@ -231,7 +295,6 @@ int ksz9021_phy_extended_read(struct phy_device *phydev, int regnum)
 	phy_write(phydev, MDIO_DEVAD_NONE, MII_KSZ9021_EXTENDED_CTRL, regnum);
 	return phy_read(phydev, MDIO_DEVAD_NONE, MII_KSZ9021_EXTENDED_DATAR);
 }
-
 
 static int ksz9021_phy_extread(struct phy_device *phydev, int addr, int devaddr,
 			       int regnum)
@@ -257,6 +320,8 @@ static int ksz9021_config(struct phy_device *phydev)
 	if (ret)
 		return ret;
 
+	ksz90x1_workaround_asymmetric_pause(phydev);
+
 	if (env_get("disable_giga"))
 		features &= ~(SUPPORTED_1000baseT_Half |
 		SUPPORTED_1000baseT_Full);
@@ -273,10 +338,10 @@ static int ksz9021_config(struct phy_device *phydev)
 	return 0;
 }
 
-static struct phy_driver ksz9021_driver = {
+U_BOOT_PHY_DRIVER(ksz9021) = {
 	.name = "Micrel ksz9021",
 	.uid  = 0x221610,
-	.mask = 0xfffff0,
+	.mask = 0xfffffe,
 	.features = PHY_GBIT_FEATURES,
 	.config = &ksz9021_config,
 	.startup = &ksz90xx_startup,
@@ -342,6 +407,11 @@ static int ksz9031_config(struct phy_device *phydev)
 	if (ret)
 		return ret;
 
+	/* soft reset */
+	phy_reset(phydev);
+
+	ksz90x1_workaround_asymmetric_pause(phydev);
+
 	/* add an option to disable the gigabit feature of this PHY */
 	if (env_get("disable_giga")) {
 		unsigned features;
@@ -371,10 +441,10 @@ static int ksz9031_config(struct phy_device *phydev)
 	return genphy_config(phydev);
 }
 
-static struct phy_driver ksz9031_driver = {
+U_BOOT_PHY_DRIVER(ksz9031) = {
 	.name = "Micrel ksz9031",
-	.uid  = 0x221620,
-	.mask = 0xfffff0,
+	.uid  = PHY_ID_KSZ9031,
+	.mask = MII_KSZ9x31_SILICON_REV_MASK,
 	.features = PHY_GBIT_FEATURES,
 	.config   = &ksz9031_config,
 	.startup  = &ksz90xx_startup,
@@ -383,9 +453,257 @@ static struct phy_driver ksz9031_driver = {
 	.readext = &ksz9031_phy_extread,
 };
 
-int phy_micrel_ksz90x1_init(void)
+/*
+ * KSZ9131
+ */
+
+#define KSZ9131RN_MMD_COMMON_CTRL_REG	2
+#define KSZ9131RN_RXC_DLL_CTRL		76
+#define KSZ9131RN_TXC_DLL_CTRL		77
+#define KSZ9131RN_DLL_CTRL_BYPASS	BIT_MASK(12)
+#define KSZ9131RN_DLL_ENABLE_DELAY	0
+#define KSZ9131RN_DLL_DISABLE_DELAY	BIT(12)
+
+#define KSZ9131RN_COMMON_CTRL				0
+#define KSZ9131RN_COMMON_CTRL_INDIVIDUAL_LED_MODE	BIT(4)
+
+#define KSZ9131RN_LED_ERRATA_REG	0x1e
+#define KSZ9131RN_LED_ERRATA_BIT	BIT(9)
+
+#define KSZ9131RN_CONTROL_PAD_SKEW	4
+#define KSZ9131RN_RX_DATA_PAD_SKEW	5
+#define KSZ9131RN_TX_DATA_PAD_SKEW	6
+#define KSZ9131RN_CLK_PAD_SKEW		8
+
+#define KSZ9131RN_SKEW_5BIT_MAX		2400
+#define KSZ9131RN_SKEW_4BIT_MAX		800
+#define KSZ9131RN_OFFSET		700
+#define KSZ9131RN_STEP			100
+
+static int ksz9131_of_load_skew_values(struct phy_device *phydev,
+				       ofnode of_node,
+				       u16 reg, size_t field_sz,
+				       const char *field[], u8 numfields)
 {
-	phy_register(&ksz9021_driver);
-	phy_register(&ksz9031_driver);
-	return 0;
+	int val[4] = {-(1 + KSZ9131RN_OFFSET), -(2 + KSZ9131RN_OFFSET),
+		      -(3 + KSZ9131RN_OFFSET), -(4 + KSZ9131RN_OFFSET)};
+	int skewval, skewmax = 0;
+	int matches = 0;
+	u16 maxval;
+	u16 newval;
+	u16 mask;
+	int i;
+
+	/* psec properties in dts should mean x pico seconds */
+	if (field_sz == 5)
+		skewmax = KSZ9131RN_SKEW_5BIT_MAX;
+	else
+		skewmax = KSZ9131RN_SKEW_4BIT_MAX;
+
+	for (i = 0; i < numfields; i++)
+		if (!ofnode_read_s32(of_node, field[i], &skewval)) {
+			if (skewval < -KSZ9131RN_OFFSET)
+				skewval = -KSZ9131RN_OFFSET;
+			else if (skewval > skewmax)
+				skewval = skewmax;
+
+			val[i] = skewval + KSZ9131RN_OFFSET;
+			matches++;
+		}
+
+	if (!matches)
+		return 0;
+
+	if (matches < numfields)
+		newval = phy_read_mmd(phydev, KSZ9131RN_MMD_COMMON_CTRL_REG, reg);
+	else
+		newval = 0;
+
+	maxval = (field_sz == 4) ? 0xf : 0x1f;
+	for (i = 0; i < numfields; i++)
+		if (val[i] != -(i + 1 + KSZ9131RN_OFFSET)) {
+			mask = 0xffff;
+			mask ^= maxval << (field_sz * i);
+			newval = (newval & mask) |
+				(((val[i] / KSZ9131RN_STEP) & maxval)
+					<< (field_sz * i));
+		}
+
+	return phy_write_mmd(phydev, KSZ9131RN_MMD_COMMON_CTRL_REG, reg, newval);
+}
+
+static int ksz9131_of_load_all_skew_values(struct phy_device *phydev)
+{
+	const char *control_skews[2] = { "txen-skew-psec", "rxdv-skew-psec" };
+	const char *clk_skews[2] = { "rxc-skew-psec", "txc-skew-psec" };
+	const char *rx_data_skews[4] = {
+		"rxd0-skew-psec", "rxd1-skew-psec",
+		"rxd2-skew-psec", "rxd3-skew-psec"
+	};
+	const char *tx_data_skews[4] = {
+		"txd0-skew-psec", "txd1-skew-psec",
+		"txd2-skew-psec", "txd3-skew-psec"
+	};
+	struct ofnode_phandle_args phandle_args;
+	int ret;
+
+	/*
+	 * Silently ignore failure here as the device tree is not required to
+	 * contain a phy node.
+	 */
+	if (dev_read_phandle_with_args(phydev->dev, "phy-handle", NULL, 0, 0,
+				       &phandle_args))
+		return 0;
+
+	if (!ofnode_valid(phandle_args.node))
+		return 0;
+
+	ret = ksz9131_of_load_skew_values(phydev, phandle_args.node,
+					  KSZ9131RN_CLK_PAD_SKEW, 5,
+					  clk_skews, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = ksz9131_of_load_skew_values(phydev, phandle_args.node,
+					  KSZ9131RN_CONTROL_PAD_SKEW, 4,
+					  control_skews, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = ksz9131_of_load_skew_values(phydev, phandle_args.node,
+					  KSZ9131RN_RX_DATA_PAD_SKEW, 4,
+					  rx_data_skews, 4);
+	if (ret < 0)
+		return ret;
+
+	return ksz9131_of_load_skew_values(phydev, phandle_args.node,
+					   KSZ9131RN_TX_DATA_PAD_SKEW, 4,
+					   tx_data_skews, 4);
+}
+
+static int ksz9131_config_rgmii_delay(struct phy_device *phydev)
+{
+	u16 rxcdll_val, txcdll_val;
+	int ret;
+
+	switch (phydev->interface) {
+	case PHY_INTERFACE_MODE_RGMII:
+		rxcdll_val = KSZ9131RN_DLL_DISABLE_DELAY;
+		txcdll_val = KSZ9131RN_DLL_DISABLE_DELAY;
+		break;
+	case PHY_INTERFACE_MODE_RGMII_ID:
+		rxcdll_val = KSZ9131RN_DLL_ENABLE_DELAY;
+		txcdll_val = KSZ9131RN_DLL_ENABLE_DELAY;
+		break;
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+		rxcdll_val = KSZ9131RN_DLL_ENABLE_DELAY;
+		txcdll_val = KSZ9131RN_DLL_DISABLE_DELAY;
+		break;
+	case PHY_INTERFACE_MODE_RGMII_TXID:
+		rxcdll_val = KSZ9131RN_DLL_DISABLE_DELAY;
+		txcdll_val = KSZ9131RN_DLL_ENABLE_DELAY;
+		break;
+	default:
+		return 0;
+	}
+
+	ret = phy_modify_mmd(phydev, KSZ9131RN_MMD_COMMON_CTRL_REG,
+			     KSZ9131RN_RXC_DLL_CTRL, KSZ9131RN_DLL_CTRL_BYPASS,
+			     rxcdll_val);
+	if (ret < 0)
+		return ret;
+
+	return phy_modify_mmd(phydev, KSZ9131RN_MMD_COMMON_CTRL_REG,
+			      KSZ9131RN_TXC_DLL_CTRL, KSZ9131RN_DLL_CTRL_BYPASS,
+			      txcdll_val);
+}
+
+/* Silicon Errata DS80000693B
+ *
+ * When LEDs are configured in Individual Mode, LED1 is ON in a no-link
+ * condition. Workaround is to set register 0x1e, bit 9, this way LED1 behaves
+ * according to the datasheet (off if there is no link).
+ */
+static int ksz9131_led_errata(struct phy_device *phydev)
+{
+	int reg;
+
+	reg = phy_read_mmd(phydev, KSZ9131RN_MMD_COMMON_CTRL_REG,
+			   KSZ9131RN_COMMON_CTRL);
+	if (reg < 0)
+		return reg;
+
+	if (!(reg & KSZ9131RN_COMMON_CTRL_INDIVIDUAL_LED_MODE))
+		return 0;
+
+	return phy_set_bits(phydev, MDIO_DEVAD_NONE, KSZ9131RN_LED_ERRATA_REG,
+			    KSZ9131RN_LED_ERRATA_BIT);
+}
+
+static int ksz9131_config(struct phy_device *phydev)
+{
+	int ret;
+
+	if (phy_interface_is_rgmii(phydev)) {
+		ret = ksz9131_config_rgmii_delay(phydev);
+		if (ret)
+			return ret;
+	}
+
+	ret = ksz9131_of_load_all_skew_values(phydev);
+	if (ret < 0)
+		return ret;
+
+	ret = ksz9131_led_errata(phydev);
+	if (ret < 0)
+		return ret;
+
+	/* add an option to disable the gigabit feature of this PHY */
+	if (env_get("disable_giga")) {
+		unsigned features;
+		unsigned bmcr;
+
+		/* disable speed 1000 in features supported by the PHY */
+		features = phydev->drv->features;
+		features &= ~(SUPPORTED_1000baseT_Half |
+				SUPPORTED_1000baseT_Full);
+		phydev->advertising = phydev->supported = features;
+
+		/* disable speed 1000 in Basic Control Register */
+		bmcr = phy_read(phydev, MDIO_DEVAD_NONE, MII_BMCR);
+		bmcr &= ~(1 << 6);
+		phy_write(phydev, MDIO_DEVAD_NONE, MII_BMCR, bmcr);
+
+		/* disable speed 1000 in 1000Base-T Control Register */
+		phy_write(phydev, MDIO_DEVAD_NONE, MII_CTRL1000, 0);
+
+		/* start autoneg */
+		genphy_config_aneg(phydev);
+		genphy_restart_aneg(phydev);
+
+		return 0;
+	}
+
+	return genphy_config(phydev);
+}
+
+U_BOOT_PHY_DRIVER(ksz9131) = {
+	.name = "Micrel ksz9131",
+	.uid  = PHY_ID_KSZ9131,
+	.mask = MII_KSZ9x31_SILICON_REV_MASK,
+	.features = PHY_GBIT_FEATURES,
+	.config   = &ksz9131_config,
+	.startup  = &ksz90xx_startup,
+	.shutdown = &genphy_shutdown,
+	.writeext = &ksz9031_phy_extwrite,
+	.readext = &ksz9031_phy_extread,
+};
+
+int ksz9xx1_phy_get_id(struct phy_device *phydev)
+{
+	unsigned int phyid;
+
+	get_phy_id(phydev->bus, phydev->addr, MDIO_DEVAD_NONE, &phyid);
+
+	return phyid;
 }

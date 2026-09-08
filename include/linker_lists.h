@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * include/linker_lists.h
  *
  * Implementation of linker-generated arrays
  *
  * Copyright (C) 2012 Marek Vasut <marex@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __LINKER_LISTS_H__
@@ -19,87 +18,6 @@
  */
 
 #if !defined(__ASSEMBLY__)
-
-/**
- * A linker list is constructed by grouping together linker input
- * sections, each containing one entry of the list. Each input section
- * contains a constant initialized variable which holds the entry's
- * content. Linker list input sections are constructed from the list
- * and entry names, plus a prefix which allows grouping all lists
- * together. Assuming _list and _entry are the list and entry names,
- * then the corresponding input section name is
- *
- *   .u_boot_list_ + 2_ + @_list + _2_ + @_entry
- *
- * and the C variable name is
- *
- *   _u_boot_list + _2_ + @_list + _2_ + @_entry
- *
- * This ensures uniqueness for both input section and C variable name.
- *
- * Note that the names differ only in the first character, "." for the
- * section and "_" for the variable, so that the linker cannot confuse
- * section and symbol names. From now on, both names will be referred
- * to as
- *
- *   %u_boot_list_ + 2_ + @_list + _2_ + @_entry
- *
- * Entry variables need never be referred to directly.
- *
- * The naming scheme for input sections allows grouping all linker lists
- * into a single linker output section and grouping all entries for a
- * single list.
- *
- * Note the two '_2_' constant components in the names: their presence
- * allows putting a start and end symbols around a list, by mapping
- * these symbols to sections names with components "1" (before) and
- * "3" (after) instead of "2" (within).
- * Start and end symbols for a list can generally be defined as
- *
- *   %u_boot_list_2_ + @_list + _1_...
- *   %u_boot_list_2_ + @_list + _3_...
- *
- * Start and end symbols for the whole of the linker lists area can be
- * defined as
- *
- *   %u_boot_list_1_...
- *   %u_boot_list_3_...
- *
- * Here is an example of the sorted sections which result from a list
- * "array" made up of three entries : "first", "second" and "third",
- * iterated at least once.
- *
- *   .u_boot_list_2_array_1
- *   .u_boot_list_2_array_2_first
- *   .u_boot_list_2_array_2_second
- *   .u_boot_list_2_array_2_third
- *   .u_boot_list_2_array_3
- *
- * If lists must be divided into sublists (e.g. for iterating only on
- * part of a list), one can simply give the list a name of the form
- * 'outer_2_inner', where 'outer' is the global list name and 'inner'
- * is the sub-list name. Iterators for the whole list should use the
- * global list name ("outer"); iterators for only a sub-list should use
- * the full sub-list name ("outer_2_inner").
- *
- * Here is an example of the sections generated from a global list
- * named "drivers", two sub-lists named "i2c" and "pci", and iterators
- * defined for the whole list and each sub-list:
- *
- *   %u_boot_list_2_drivers_1
- *   %u_boot_list_2_drivers_2_i2c_1
- *   %u_boot_list_2_drivers_2_i2c_2_first
- *   %u_boot_list_2_drivers_2_i2c_2_first
- *   %u_boot_list_2_drivers_2_i2c_2_second
- *   %u_boot_list_2_drivers_2_i2c_2_third
- *   %u_boot_list_2_drivers_2_i2c_3
- *   %u_boot_list_2_drivers_2_pci_1
- *   %u_boot_list_2_drivers_2_pci_2_first
- *   %u_boot_list_2_drivers_2_pci_2_second
- *   %u_boot_list_2_drivers_2_pci_2_third
- *   %u_boot_list_2_drivers_2_pci_3
- *   %u_boot_list_2_drivers_3
- */
 
 /**
  * llsym() - Access a linker-generated array entry
@@ -135,21 +53,24 @@
  *    a subsection of this section is declared and contains some elements,
  *    it is imperative that the elements are of the same type.
  *
- * 4) In case an outer section is declared that contains some array elements
+ * 3) In case an outer section is declared that contains some array elements
  *    AND an inner subsection of this section is declared and contains some
  *    elements, then when traversing the outer section, even the elements of
  *    the inner sections are present in the array.
  *
  * Example:
- * ll_entry_declare(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
- *         .x = 3,
- *         .y = 4,
- * };
+ *
+ * ::
+ *
+ *   ll_entry_declare(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
+ *           .x = 3,
+ *           .y = 4,
+ *   };
  */
 #define ll_entry_declare(_type, _name, _list)				\
 	_type _u_boot_list_2_##_list##_2_##_name __aligned(4)		\
-			__attribute__((unused,				\
-			section(".u_boot_list_2_"#_list"_2_"#_name)))
+			__attribute__((unused))				\
+			__section("__u_boot_list_2_"#_list"_2_"#_name)
 
 /**
  * ll_entry_declare_list() - Declare a list of link-generated array entries
@@ -161,18 +82,20 @@
  * This is like ll_entry_declare() but creates multiple entries. It should
  * be assigned to an array.
  *
- * ll_entry_declare_list(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
- *	{ .x = 3, .y = 4 },
- *	{ .x = 8, .y = 2 },
- *	{ .x = 1, .y = 7 }
- * };
+ * ::
+ *
+ *   ll_entry_declare_list(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
+ *        { .x = 3, .y = 4 },
+ *        { .x = 8, .y = 2 },
+ *        { .x = 1, .y = 7 }
+ *   };
  */
 #define ll_entry_declare_list(_type, _name, _list)			\
 	_type _u_boot_list_2_##_list##_2_##_name[] __aligned(4)		\
-			__attribute__((unused,				\
-			section(".u_boot_list_2_"#_list"_2_"#_name)))
+			__attribute__((unused))				\
+			__section("__u_boot_list_2_"#_list"_2_"#_name)
 
-/**
+/*
  * We need a 0-byte-size type for iterator symbols, and the compiler
  * does not allow defining objects of C type 'void'. Using an empty
  * struct is allowed by the compiler, but causes gcc versions 4.4 and
@@ -186,21 +109,27 @@
  * @_type:	Data type of the entry
  * @_list:	Name of the list in which this entry is placed
  *
- * This function returns (_type *) pointer to the very first entry of a
- * linker-generated array placed into subsection of .u_boot_list section
+ * This function returns ``(_type *)`` pointer to the very first entry of a
+ * linker-generated array placed into subsection of __u_boot_list section
  * specified by _list argument.
  *
  * Since this macro defines an array start symbol, its leftmost index
  * must be 2 and its rightmost index must be 1.
  *
  * Example:
- * struct my_sub_cmd *msc = ll_entry_start(struct my_sub_cmd, cmd_sub);
+ *
+ * ::
+ *
+ *   struct my_sub_cmd *msc = ll_entry_start(struct my_sub_cmd, cmd_sub);
  */
 #define ll_entry_start(_type, _list)					\
 ({									\
-	static char start[0] __aligned(4) __attribute__((unused,	\
-		section(".u_boot_list_2_"#_list"_1")));			\
-	(_type *)&start;						\
+	static char start[0] __aligned(CONFIG_LINKER_LIST_ALIGN)	\
+		__attribute__((unused))					\
+		__section("__u_boot_list_2_"#_list"_1");			\
+	_type * tmp = (_type *)&start;					\
+	asm("":"+r"(tmp));						\
+	tmp;								\
 })
 
 /**
@@ -209,21 +138,40 @@
  * @_list:	Name of the list in which this entry is placed
  *		(with underscores instead of dots)
  *
- * This function returns (_type *) pointer after the very last entry of
- * a linker-generated array placed into subsection of .u_boot_list
+ * This function returns ``(_type *)`` pointer after the very last entry of
+ * a linker-generated array placed into subsection of __u_boot_list
  * section specified by _list argument.
  *
  * Since this macro defines an array end symbol, its leftmost index
  * must be 2 and its rightmost index must be 3.
  *
+ * The end symbol uses __aligned(1) to ensure it is placed immediately after
+ * the last entry without any padding. This is critical for ll_entry_count()
+ * to work correctly.
+ *
+ * If the end marker had a higher alignment (e.g., 4 or 32 bytes), the linker
+ * might insert padding between the last entry and the end marker to satisfy
+ * alignment requirements of the following section. This would cause pointer
+ * subtraction (end - start) to produce incorrect results because the compiler
+ * optimizes pointer division using magic-number multiplication, which only
+ * works correctly when the byte span is an exact multiple of the struct size.
+ *
+ * With __aligned(1), the end marker is placed at exactly (start + n * sizeof)
+ * where n is the number of entries, ensuring correct pointer arithmetic.
+ *
  * Example:
- * struct my_sub_cmd *msc = ll_entry_end(struct my_sub_cmd, cmd_sub);
+ *
+ * ::
+ *
+ *   struct my_sub_cmd *msc = ll_entry_end(struct my_sub_cmd, cmd_sub);
  */
 #define ll_entry_end(_type, _list)					\
 ({									\
-	static char end[0] __aligned(4) __attribute__((unused,		\
-		section(".u_boot_list_2_"#_list"_3")));			\
-	(_type *)&end;							\
+	static char end[0] __aligned(1) __attribute__((unused))		\
+		__section("__u_boot_list_2_"#_list"_3");			\
+	_type * tmp = (_type *)&end;					\
+	asm("":"+r"(tmp));						\
+	tmp;								\
 })
 /**
  * ll_entry_count() - Return the number of elements in linker-generated array
@@ -231,15 +179,18 @@
  * @_list:	Name of the list of which the number of elements is computed
  *
  * This function returns the number of elements of a linker-generated array
- * placed into subsection of .u_boot_list section specified by _list
+ * placed into subsection of __u_boot_list section specified by _list
  * argument. The result is of an unsigned int type.
  *
  * Example:
- * int i;
- * const unsigned int count = ll_entry_count(struct my_sub_cmd, cmd_sub);
- * struct my_sub_cmd *msc = ll_entry_start(struct my_sub_cmd, cmd_sub);
- * for (i = 0; i < count; i++, msc++)
- *         printf("Entry %i, x=%i y=%i\n", i, msc->x, msc->y);
+ *
+ * ::
+ *
+ *   int i;
+ *   const unsigned int count = ll_entry_count(struct my_sub_cmd, cmd_sub);
+ *   struct my_sub_cmd *msc = ll_entry_start(struct my_sub_cmd, cmd_sub);
+ *   for (i = 0; i < count; i++, msc++)
+ *           printf("Entry %i, x=%i y=%i\n", i, msc->x, msc->y);
  */
 #define ll_entry_count(_type, _list)					\
 	({								\
@@ -248,6 +199,67 @@
 		unsigned int _ll_result = end - start;			\
 		_ll_result;						\
 	})
+
+/**
+ * Declares a symbol that points to the start/end of the list.
+ *
+ * @_sym:	Arbitrary name for the symbol (to use later in the file)
+ * @_type:	Data type of the entry
+ * @_list:	Name of the list in which this entry is placed
+ *
+ * The name of the (new) symbol is arbitrary and can be anything that is not
+ * already declared in the file where it appears. It is provided in _sym and
+ * can then be used (later in the same file) within a data structure.
+ * The _type and _list arguments must match those passed to ll_entry_start/end()
+ *
+ * Example:
+ *
+ * Here we want to record the start of each sub-command in a list. We have two
+ * sub-commands, 'bob' and 'mary'.
+ *
+ * In bob.c::
+ *
+ *   ll_entry_declare(struct my_sub_cmd, bob_cmd, cmd_sub) = {...};
+ *
+ * In mary.c::
+ *
+ *   ll_entry_declare(struct my_sub_cmd, mary_cmd, cmd_sub) = {...};
+ *
+ * In a different file where we want a list the start of all sub-commands.
+ * It is not possible to use ll_entry_start() in a data structure, due to its
+ * use of code inside expressions - ({ ... }) - so this fails to compile:
+ *
+ * In sub_cmds.c::
+ *
+ *    struct cmd_sub *my_list[] = {
+ *      ll_entry_start(cmd_sub, bob),
+ *      ll_entry_start(cmd_sub, bob),
+ *    };
+ *
+ * Instead, we can use::
+ *
+ *    ll_start_decl(bob, struct my_sub_cmd, cmd_sub);
+ *    ll_start_decl(mary, struct my_sub_cmd, cmd_sub);
+ *
+ *     struct cmd_sub *my_list[] = {
+ *       bob,
+ *       mary,
+ *     };
+ *
+ * So 'bob' is declared as symbol, a struct my_list * which points to the
+ * start of the bob sub-commands. It is then used in my_list[]
+ */
+#define ll_start_decl(_sym, _type, _list)					\
+	static _type _sym[0] __aligned(CONFIG_LINKER_LIST_ALIGN)	\
+		__maybe_unused __section("__u_boot_list_2_" #_list "_1")
+
+/*
+ * ll_end_decl uses __aligned(1) to avoid padding before the end marker.
+ * See the comment for ll_entry_end() for a full explanation.
+ */
+#define ll_end_decl(_sym, _type, _list)					\
+	static _type _sym[0] __aligned(1)				\
+		__maybe_unused __section("__u_boot_list_2_" #_list "_3")
 
 /**
  * ll_entry_get() - Retrieve entry from linker-generated array by name
@@ -260,60 +272,40 @@
  * and it's name.
  *
  * Example:
- * ll_entry_declare(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
- *         .x = 3,
- *         .y = 4,
- * };
- * ...
- * struct my_sub_cmd *c = ll_entry_get(struct my_sub_cmd, my_sub_cmd, cmd_sub);
+ *
+ * ::
+ *
+ *   ll_entry_declare(struct my_sub_cmd, my_sub_cmd, cmd_sub) = {
+ *           .x = 3,
+ *           .y = 4,
+ *   };
+ *   ...
+ *   struct my_sub_cmd *c = ll_entry_get(struct my_sub_cmd, my_sub_cmd, cmd_sub);
  */
 #define ll_entry_get(_type, _name, _list)				\
 	({								\
-		extern _type _u_boot_list_2_##_list##_2_##_name;	\
+		extern _type _u_boot_list_2_##_list##_2_##_name		\
+			__aligned(4);					\
 		_type *_ll_result =					\
 			&_u_boot_list_2_##_list##_2_##_name;		\
 		_ll_result;						\
 	})
 
 /**
- * ll_start() - Point to first entry of first linker-generated array
- * @_type:	Data type of the entry
+ * ll_entry_ref() - Get a reference to a linker-generated array entry
  *
- * This function returns (_type *) pointer to the very first entry of
- * the very first linker-generated array.
+ * Once an extern ll_entry_declare() has been used to declare the reference,
+ * this macro allows the entry to be accessed.
  *
- * Since this macro defines the start of the linker-generated arrays,
- * its leftmost index must be 1.
+ * This is like ll_entry_get(), but without the extra code, so it is suitable
+ * for putting into data structures.
  *
- * Example:
- * struct my_sub_cmd *msc = ll_start(struct my_sub_cmd);
+ * @_type: C type of the list entry, e.g. 'struct foo'
+ * @_name: name of the entry
+ * @_list: name of the list
  */
-#define ll_start(_type)							\
-({									\
-	static char start[0] __aligned(4) __attribute__((unused,	\
-		section(".u_boot_list_1")));				\
-	(_type *)&start;						\
-})
-
-/**
- * ll_end() - Point after last entry of last linker-generated array
- * @_type:	Data type of the entry
- *
- * This function returns (_type *) pointer after the very last entry of
- * the very last linker-generated array.
- *
- * Since this macro defines the end of the linker-generated arrays,
- * its leftmost index must be 3.
- *
- * Example:
- * struct my_sub_cmd *msc = ll_end(struct my_sub_cmd);
- */
-#define ll_end(_type)							\
-({									\
-	static char end[0] __aligned(4) __attribute__((unused,		\
-		section(".u_boot_list_3")));				\
-	(_type *)&end;							\
-})
+#define ll_entry_ref(_type, _name, _list)				\
+	((_type *)&_u_boot_list_2_##_list##_2_##_name)
 
 #endif /* __ASSEMBLY__ */
 

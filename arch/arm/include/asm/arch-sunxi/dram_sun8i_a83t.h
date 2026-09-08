@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Sun8i platform dram controller register and constant defines
  *
@@ -5,12 +6,14 @@
  *                         Jerry Wang <wangflord@allwinnertech.com>
  * (C) Copyright 2015      Vishnu Patekar <vishnupatekar0510@gmail.com>
  * (C) Copyright 2014-2015 Hans de Goede <hdegoede@redhat.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _SUNXI_DRAM_SUN8I_A83T_H
 #define _SUNXI_DRAM_SUN8I_A83T_H
+
+#ifndef __ASSEMBLY__
+#include <linux/bitops.h>
+#endif
 
 struct sunxi_mctl_com_reg {
 	u32 cr;			/* 0x00 */
@@ -142,7 +145,6 @@ struct sunxi_mctl_ctl_reg {
 	u32 perfwr0;		/* 0x1d4 */
 	u32 perfwr1;		/* 0x1d8 */
 };
-
 
 #define ZQnPR(x)	(SUNXI_DRAM_CTL0_BASE + 0x00000144 + 0x10 * x)
 #define ZQnDR(x)	(SUNXI_DRAM_CTL0_BASE + 0x00000148 + 0x10 * x)

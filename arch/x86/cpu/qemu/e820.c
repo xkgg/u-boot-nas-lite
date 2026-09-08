@@ -1,45 +1,53 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2015 Miao Yan <yanmiaobest@gmail.com>
+ * QEMU x86 specific E820 table generation
  *
- * SPDX-License-Identifier:	GPL-2.0+
+ * (C) Copyright 2015 Miao Yan <yanmiaobest@gmail.com>
+ * (C) Copyright 2019 Bin Meng <bmeng.cn@gmail.com>
  */
 
-#include <common.h>
+#include <bloblist.h>
+#include <env_internal.h>
+#include <malloc.h>
 #include <asm/e820.h>
+#include <asm/arch/qemu.h>
+#include <asm/global_data.h>
+#include <linux/sizes.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
-unsigned install_e820_map(unsigned max_entries, struct e820entry *entries)
+unsigned int install_e820_map(unsigned int max_entries,
+			      struct e820_entry *entries)
 {
-	entries[0].addr = 0;
-	entries[0].size = ISA_START_ADDRESS;
-	entries[0].type = E820_RAM;
+	u64 high_mem_size;
+	struct e820_ctx ctx;
 
-	entries[1].addr = ISA_START_ADDRESS;
-	entries[1].size = ISA_END_ADDRESS - ISA_START_ADDRESS;
-	entries[1].type = E820_RESERVED;
+	e820_init(&ctx, entries, max_entries);
+
+	e820_next(&ctx, E820_RAM, ISA_START_ADDRESS);
+	e820_next(&ctx, E820_RESERVED, ISA_END_ADDRESS);
 
 	/*
-	 * since we use memalign(malloc) to allocate high memory for
-	 * storing ACPI tables, we need to reserve them in e820 tables,
-	 * otherwise kernel will reclaim them and data will be corrupted
+	 * if we use bloblist to allocate high memory for storing ACPI tables,
+	 * we need to reserve that region in e820 tables, otherwise the kernel
+	 * will reclaim them and data will be corrupted. The ACPI tables may not
+	 * have been written yet, so use the whole bloblist size
 	 */
-	entries[2].addr = ISA_END_ADDRESS;
-	entries[2].size = gd->relocaddr - TOTAL_MALLOC_LEN - ISA_END_ADDRESS;
-	entries[2].type = E820_RAM;
+	if (IS_ENABLED(CONFIG_BLOBLIST_TABLES)) {
+		e820_to_addr(&ctx, E820_RAM, (ulong)gd->bloblist);
+		e820_next(&ctx, E820_ACPI, bloblist_get_total_size());
+	} else {
+		/* If using memalign() reserve that whole region instead */
+		e820_to_addr(&ctx, E820_RAM, gd->relocaddr - TOTAL_MALLOC_LEN);
+		e820_next(&ctx, E820_ACPI, TOTAL_MALLOC_LEN);
+	}
+	e820_to_addr(&ctx, E820_RAM, qemu_get_low_memory_size());
+	e820_add(&ctx, E820_RESERVED, CONFIG_PCIE_ECAM_BASE,
+		 CONFIG_PCIE_ECAM_SIZE);
 
-	/* for simplicity, reserve entire malloc space */
-	entries[3].addr = gd->relocaddr - TOTAL_MALLOC_LEN;
-	entries[3].size = TOTAL_MALLOC_LEN;
-	entries[3].type = E820_RESERVED;
+	high_mem_size = qemu_get_high_memory_size();
+	if (high_mem_size)
+		e820_add(&ctx, E820_RAM, SZ_4G, high_mem_size);
 
-	entries[4].addr = gd->relocaddr;
-	entries[4].size = gd->ram_size - gd->relocaddr;
-	entries[4].type = E820_RESERVED;
-
-	entries[5].addr = CONFIG_PCIE_ECAM_BASE;
-	entries[5].size = CONFIG_PCIE_ECAM_SIZE;
-	entries[5].type = E820_RESERVED;
-
-	return 6;
+	return e820_finish(&ctx);
 }

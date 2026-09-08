@@ -13,8 +13,15 @@ config FAT_WRITE
 	  This provides support for creating and writing new files to an
 	  existing FAT filesystem partition.
 
+config FAT_RENAME
+	bool "Enable filesystem rename support"
+	depends on FAT_WRITE
+	help
+	  This provides support for renaming and moving files within a
+	  FAT filesystem partition.
+
 config FS_FAT_MAX_CLUSTSIZE
-	int "Set maximum possible clusersize"
+	int "Set maximum possible clustersize"
 	default 65536
 	depends on FS_FAT
 	help
@@ -22,3 +29,11 @@ config FS_FAT_MAX_CLUSTSIZE
 	  is the smallest amount of disk space that can be used to hold a
 	  file. Unless you have an extremely tight memory memory constraints,
 	  leave the default.
+
+config FS_FAT_HANDLE_SECTOR_SIZE_MISMATCH
+	bool "Handle FAT sector size mismatch"
+	default n
+	depends on FS_FAT
+	help
+	  Handle filesystems on media where the hardware block size and
+          the sector size in the FAT metadata do not match.

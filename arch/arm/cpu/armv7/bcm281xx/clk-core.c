@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2013 Broadcom Corporation.
- *
- * SPDX-License-Identifier:      GPL-2.0+
  */
 
 /*
@@ -10,8 +9,9 @@
  *
  */
 
-#include <common.h>
+#include <log.h>
 #include <asm/io.h>
+#include <linux/delay.h>
 #include <linux/errno.h>
 #include <bitfield.h>
 #include <asm/arch/sysmap.h>
@@ -83,7 +83,6 @@ static int peri_clk_enable(struct clk *c, int enable)
 	struct peri_clk_data *cd = peri_clk->data;
 	struct bcm_clk_gate *gate = &cd->gate;
 	void *base = (void *)c->ccu_clk_mgr_base;
-
 
 	debug("%s: %s\n", __func__, c->name);
 

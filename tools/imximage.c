@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2009
  * Stefano Babic, DENX Software Engineering, sbabic@denx.de.
@@ -5,16 +6,18 @@
  * (C) Copyright 2008
  * Marvell Semiconductor <www.marvell.com>
  * Written-by: Prafulla Wadaskar <prafulla@marvell.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include "imagetool.h"
 #include <image.h>
 #include "imximage.h"
+#include <generated/autoconf.h>
 
 #define UNDEFINED 0xFFFFFFFF
 
+#if !defined(CONFIG_IMX_DCD_ADDR)
+#define CONFIG_IMX_DCD_ADDR 0x00910000
+#endif
 /*
  * Supported commands for configuration file
  */
@@ -457,7 +460,7 @@ static void print_hdr_v1(struct imx_header *imx_hdr)
 	uint32_t size, length, ver;
 
 	size = dcd_v1->preamble.length;
-	if (size > (MAX_HW_CFG_SIZE_V1 * sizeof(dcd_type_addr_data_t))) {
+	if (size >= (MAX_HW_CFG_SIZE_V1 * sizeof(dcd_type_addr_data_t))) {
 		fprintf(stderr,
 			"Error: Image corrupt DCD size %d exceed maximum %d\n",
 			(uint32_t)(size / sizeof(dcd_type_addr_data_t)),
@@ -507,8 +510,7 @@ static void print_hdr_v2(struct imx_header *imx_hdr)
 		genimg_print_size(hdr_v2->boot_data.size);
 		printf("Load Address: %08x\n", (uint32_t)fhdr_v2->boot_data_ptr);
 		printf("Entry Point:  %08x\n", (uint32_t)fhdr_v2->entry);
-		if (fhdr_v2->csf && (imximage_ivt_offset != UNDEFINED) &&
-		    (imximage_csf_size != UNDEFINED)) {
+		if (fhdr_v2->csf) {
 			uint16_t dcdlen;
 			int offs;
 
@@ -516,12 +518,18 @@ static void print_hdr_v2(struct imx_header *imx_hdr)
 			offs = (char *)&hdr_v2->data.dcd_table
 				- (char *)hdr_v2;
 
-			printf("HAB Blocks:   %08x %08x %08x\n",
+			/*
+			 * The HAB block is the first part of the image, from
+			 * start of IVT header (fhdr_v2->self) to the start of
+			 * the CSF block (fhdr_v2->csf). So HAB size is
+			 * calculated as:
+			 * HAB_size = fhdr_v2->csf - fhdr_v2->self
+			 */
+			printf("HAB Blocks:   0x%08x 0x%08x 0x%08x\n",
 			       (uint32_t)fhdr_v2->self, 0,
-			       hdr_v2->boot_data.size - imximage_ivt_offset -
-			       imximage_csf_size);
-			printf("DCD Blocks:   00910000 %08x %08x\n",
-			       offs, be16_to_cpu(dcdlen));
+			       (uint32_t)(fhdr_v2->csf - fhdr_v2->self));
+			printf("DCD Blocks:   0x%08x 0x%08x 0x%08x\n",
+			       CONFIG_IMX_DCD_ADDR, offs, be16_to_cpu(dcdlen));
 		}
 	} else {
 		imx_header_v2_t *next_hdr_v2;
@@ -775,6 +783,7 @@ static uint32_t parse_cfg_file(struct imx_header *imxhdr, char *name)
 	}
 
 	(*set_dcd_rst)(imxhdr, dcd_len, name, lineno);
+	free(line);
 	fclose(fd);
 
 	/* Exit if there is no BOOT_FROM field specifying the flash_offset */
@@ -784,7 +793,6 @@ static uint32_t parse_cfg_file(struct imx_header *imxhdr, char *name)
 	}
 	return dcd_len;
 }
-
 
 static int imximage_check_image_types(uint8_t type)
 {
@@ -805,7 +813,7 @@ static int imximage_verify_header(unsigned char *ptr, int image_size,
 	return 0;
 }
 
-static void imximage_print_header(const void *ptr)
+static void imximage_print_header(const void *ptr, struct image_tool_params *params)
 {
 	struct imx_header *imx_hdr = (struct imx_header *) ptr;
 	uint32_t version = detect_imximage_version(imx_hdr);
@@ -900,6 +908,64 @@ int imximage_check_params(struct image_tool_params *params)
 		(params->xflag) || !(strlen(params->imagename));
 }
 
+#ifdef CONFIG_FSPI_CONF_HEADER
+static void generate_fspi_header(int ifd)
+{
+	int i = 0;
+	char *val;
+	char lut_str[] = CONFIG_LUT_SEQUENCE;
+
+	fspi_conf fspi_conf_data = {
+	.tag = {0x46, 0x43, 0x46, 0x42},
+	.version = {0x00, 0x00, 0x01, 0x56},
+	.reserved_1 = {0x00, 0x00, 0x00, 0x00},
+	.read_sample = CONFIG_READ_CLK_SOURCE,
+	.datahold =  0x03,
+	.datasetup = 0x03,
+	.coladdrwidth = CONFIG_FSPI_COL_ADDR_W,
+	.devcfgenable = 0x00,
+	.deviceModeType = 0x00,
+	.waitTimeCfgCommands = 0x0000,
+	.devmodeseq =  {0x00, 0x00, 0x00, 0x00},
+	.devmodearg =  0x00000000,
+	.cmd_enable =  0x00,
+	.configModeType = {0x00},
+	.cmd_seq = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+							0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	.cmd_arg = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+							0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	.controllermisc = cpu_to_le32(CONFIG_FSPI_CONTROLLER_MISC),
+	.dev_type = CONFIG_DEVICE_TYPE,
+	.sflash_pad = CONFIG_FLASH_PAD_TYPE,
+	.serial_clk = CONFIG_SERIAL_CLK_FREQUENCY,
+	.lut_custom = CONFIG_LUT_CUSTOM_SEQUENCE,
+	.reserved_2 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+	.sflashA1  =  cpu_to_le32(CONFIG_FSPI_FLASH_A1_SIZE),
+	.sflashA2 = 0x00000000,
+	.sflashB1 = 0x00000000,
+	.sflashB2 = 0x00000000,
+	.cspadover = 0x00000000,
+	.sclkpadover = 0x00000000,
+	.datapadover = 0x00000000,
+	.dqspadover = 0x00000000,
+	.timeout =  0x00000000,
+	.commandInt = 0x00000000,
+	.datavalid  = {0x0000, 0x0000},
+	.busyoffset = 0x0000,
+	.busybitpolarity = 0x0000,
+	.lutCustomSeq = {0x00},
+	.reserved_3 = {0x00}
+	};
+
+	for (val = strtok(lut_str, ","); val; val = strtok(NULL, ","))
+		fspi_conf_data.lut[i++] = strtoul(val, NULL, 16);
+
+	lseek(ifd, 0, SEEK_CUR);
+	if (write(ifd, &fspi_conf_data, sizeof(fspi_conf_data)) == -1)
+		exit(EXIT_FAILURE);
+}
+#endif
+
 static int imximage_generate(struct image_tool_params *params,
 	struct image_type_params *tparams)
 {
@@ -908,6 +974,11 @@ static int imximage_generate(struct image_tool_params *params,
 	struct stat sbuf;
 	char *datafile = params->datafile;
 	uint32_t pad_len, header_size;
+
+#ifdef CONFIG_FSPI_CONF_HEADER
+	int fspi_fd;
+	char *fspi;
+#endif
 
 	memset(&imximage_header, 0, sizeof(imximage_header));
 
@@ -969,9 +1040,22 @@ static int imximage_generate(struct image_tool_params *params,
 
 	pad_len = ROUND(sbuf.st_size, 4096) - sbuf.st_size;
 
+#ifdef CONFIG_FSPI_CONF_HEADER
+	fspi = CONFIG_FSPI_CONF_FILE;
+	fspi_fd = open(fspi, O_RDWR | O_CREAT, S_IRWXU);
+	if (fspi_fd < 0) {
+		fprintf(stderr, "Can't open %s: %s\n",
+			fspi, strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	generate_fspi_header(fspi_fd);
+	close(fspi_fd);
+
+#endif
+
 	return pad_len;
 }
-
 
 /*
  * imximage parameters

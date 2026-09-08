@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2008-2011
  * Graeme Russ, <graeme.russ@gmail.com>
@@ -15,18 +16,22 @@
  *
  * Part of this file is adapted from coreboot
  * src/arch/x86/lib/cpu.c
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <cpu_func.h>
+#include <init.h>
+#include <log.h>
 #include <malloc.h>
+#include <spl.h>
 #include <asm/control_regs.h>
+#include <asm/coreboot_tables.h>
 #include <asm/cpu.h>
+#include <asm/global_data.h>
 #include <asm/mp.h>
 #include <asm/msr.h>
 #include <asm/mtrr.h>
 #include <asm/processor-flags.h>
+#include <asm/u-boot-x86.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -58,6 +63,8 @@ struct cpuinfo_x86 {
 	uint8_t x86_mask;
 };
 
+/* gcc 7.3 does not wwant to drop x86_vendors, so use #ifdef */
+#ifndef CONFIG_TPL_BUILD
 /*
  * List of cpu vendor strings along with their normalized
  * id values.
@@ -78,6 +85,7 @@ static const struct {
 	{ X86_VENDOR_NSC,       "Geode by NSC", },
 	{ X86_VENDOR_SIS,       "SiS SiS SiS ", },
 };
+#endif
 
 static void load_ds(u32 segment)
 {
@@ -131,10 +139,14 @@ void arch_setup_gd(gd_t *new_gd)
 	/* DS: data, read/write, 4 GB, base 0 */
 	gdt_addr[X86_GDT_ENTRY_32BIT_DS] = GDT_ENTRY(0xc093, 0, 0xfffff);
 
-	/* FS: data, read/write, 4 GB, base (Global Data Pointer) */
+	/*
+	 * FS: data, read/write, sizeof (Global Data Pointer),
+	 * base (Global Data Pointer)
+	 */
 	new_gd->arch.gd_addr = new_gd;
-	gdt_addr[X86_GDT_ENTRY_32BIT_FS] = GDT_ENTRY(0xc093,
-		     (ulong)&new_gd->arch.gd_addr, 0xfffff);
+	gdt_addr[X86_GDT_ENTRY_32BIT_FS] = GDT_ENTRY(0x8093,
+					(ulong)&new_gd->arch.gd_addr,
+					sizeof(new_gd->arch.gd_addr) - 1);
 
 	/* 16-bit CS: code, read/execute, 64 kB, base 0 */
 	gdt_addr[X86_GDT_ENTRY_16BIT_CS] = GDT_ENTRY(0x009b, 0, 0x0ffff);
@@ -144,6 +156,9 @@ void arch_setup_gd(gd_t *new_gd)
 
 	gdt_addr[X86_GDT_ENTRY_16BIT_FLAT_CS] = GDT_ENTRY(0x809b, 0, 0xfffff);
 	gdt_addr[X86_GDT_ENTRY_16BIT_FLAT_DS] = GDT_ENTRY(0x8093, 0, 0xfffff);
+	gdt_addr[X86_GDT_ENTRY_64BIT_CS] = GDT_ENTRY(0xaf9b, 0, 0xfffff);
+	gdt_addr[X86_GDT_ENTRY_64BIT_TS1] = GDT_ENTRY(0x8980, 0, 0xfffff);
+	gdt_addr[X86_GDT_ENTRY_64BIT_TS2] = 0;
 
 	load_gdt(gdt_addr, X86_GDT_NUM_ENTRIES);
 	load_ds(X86_GDT_ENTRY_32BIT_DS);
@@ -160,7 +175,7 @@ void arch_setup_gd(gd_t *new_gd)
  * Per Intel FSP external architecture specification, before calling any FSP
  * APIs, we need make sure the system is in flat 32-bit mode and both the code
  * and data selectors should have full 4GB access range. Here we reuse the one
- * we used in arch/x86/cpu/start16.S, and reload the segement registers.
+ * we used in arch/x86/cpu/start16.S, and reload the segment registers.
  */
 void setup_fsp_gdt(void)
 {
@@ -199,6 +214,7 @@ static inline int test_cyrix_52div(void)
 	return (unsigned char) (test >> 8) == 0x02;
 }
 
+#ifndef CONFIG_TPL_BUILD
 /*
  *	Detect a NexGen CPU running without BIOS hypercode new enough
  *	to have CPUID. (Thanks to Herbert Oppmann)
@@ -219,6 +235,7 @@ static int deep_magic_nexgen_probe(void)
 		: "=a" (ret) : : "cx", "dx");
 	return  ret;
 }
+#endif
 
 static bool has_cpuid(void)
 {
@@ -230,6 +247,7 @@ static bool has_mtrr(void)
 	return cpuid_edx(0x00000001) & (1 << 12) ? true : false;
 }
 
+#ifndef CONFIG_TPL_BUILD
 static int build_vendor_name(char *vendor_name)
 {
 	struct cpuid_result result;
@@ -242,51 +260,93 @@ static int build_vendor_name(char *vendor_name)
 
 	return result.eax;
 }
+#endif
 
-static void identify_cpu(struct cpu_device_id *cpu)
+int x86_cpu_vendor_info(char *name)
 {
-	char vendor_name[16];
-	int i;
+	uint cpu_device;
 
-	vendor_name[0] = '\0'; /* Unset */
-	cpu->device = 0; /* fix gcc 4.4.4 warning */
+	cpu_device = 0;
+
+	/* gcc 7.3 does not want to drop x86_vendors, so use #ifdef */
+#ifndef CONFIG_TPL_BUILD
+	*name = '\0'; /* Unset */
 
 	/* Find the id and vendor_name */
 	if (!has_cpuid()) {
 		/* Its a 486 if we can modify the AC flag */
 		if (flag_is_changeable_p(X86_EFLAGS_AC))
-			cpu->device = 0x00000400; /* 486 */
+			cpu_device = 0x00000400; /* 486 */
 		else
-			cpu->device = 0x00000300; /* 386 */
-		if ((cpu->device == 0x00000400) && test_cyrix_52div()) {
-			memcpy(vendor_name, "CyrixInstead", 13);
+			cpu_device = 0x00000300; /* 386 */
+		if (cpu_device == 0x00000400 && test_cyrix_52div()) {
 			/* If we ever care we can enable cpuid here */
-		}
-		/* Detect NexGen with old hypercode */
-		else if (deep_magic_nexgen_probe())
-			memcpy(vendor_name, "NexGenDriven", 13);
-	}
-	if (has_cpuid()) {
-		int  cpuid_level;
+			memcpy(name, "CyrixInstead", 13);
 
-		cpuid_level = build_vendor_name(vendor_name);
-		vendor_name[12] = '\0';
+		/* Detect NexGen with old hypercode */
+		} else if (deep_magic_nexgen_probe()) {
+			memcpy(name, "NexGenDriven", 13);
+		}
+	} else {
+		int cpuid_level;
+
+		cpuid_level = build_vendor_name(name);
+		name[12] = '\0';
 
 		/* Intel-defined flags: level 0x00000001 */
-		if (cpuid_level >= 0x00000001) {
-			cpu->device = cpuid_eax(0x00000001);
-		} else {
+		if (cpuid_level >= 0x00000001)
+			cpu_device = cpuid_eax(0x00000001);
+		else
 			/* Have CPUID level 0 only unheard of */
-			cpu->device = 0x00000400;
-		}
+			cpu_device = 0x00000400;
 	}
-	cpu->vendor = X86_VENDOR_UNKNOWN;
-	for (i = 0; i < ARRAY_SIZE(x86_vendors); i++) {
-		if (memcmp(vendor_name, x86_vendors[i].name, 12) == 0) {
-			cpu->vendor = x86_vendors[i].vendor;
+#endif /* CONFIG_TPL_BUILD */
+
+	return cpu_device;
+}
+
+static void identify_cpu(struct cpu_device_id *cpu)
+{
+	cpu->device = 0; /* fix gcc 4.4.4 warning */
+
+	/*
+	 * Do a quick and dirty check to save space - Intel and AMD only and
+	 * just the vendor. This is enough for most TPL code.
+	 */
+	if (xpl_phase() == PHASE_TPL) {
+		struct cpuid_result result;
+
+		result = cpuid(0x00000000);
+		switch (result.ecx >> 24) {
+		case 'l': /* GenuineIntel */
+			cpu->vendor = X86_VENDOR_INTEL;
+			break;
+		case 'D': /* AuthenticAMD */
+			cpu->vendor = X86_VENDOR_AMD;
+			break;
+		default:
+			cpu->vendor = X86_VENDOR_ANY;
 			break;
 		}
+		return;
 	}
+
+#ifndef CONFIG_TPL_BUILD
+	{
+		char vendor_name[16];
+		int i;
+
+		cpu->device = x86_cpu_vendor_info(vendor_name);
+
+		cpu->vendor = X86_VENDOR_UNKNOWN;
+		for (i = 0; i < ARRAY_SIZE(x86_vendors); i++) {
+			if (memcmp(vendor_name, x86_vendors[i].name, 12) == 0) {
+				cpu->vendor = x86_vendors[i].vendor;
+				break;
+			}
+		}
+	}
+#endif
 }
 
 static inline void get_fms(struct cpuinfo_x86 *c, uint32_t tfms)
@@ -310,21 +370,27 @@ u32 cpu_get_stepping(void)
 	return gd->arch.x86_mask;
 }
 
-int x86_cpu_init_f(void)
+/* initialise FPU, reset EM, set MP and NE */
+static void setup_cpu_features(void)
 {
 	const u32 em_rst = ~X86_CR0_EM;
 	const u32 mp_ne_set = X86_CR0_MP | X86_CR0_NE;
 
-	if (ll_boot_init()) {
-		/* initialize FPU, reset EM, set MP and NE */
-		asm ("fninit\n" \
-		"movl %%cr0, %%eax\n" \
-		"andl %0, %%eax\n" \
-		"orl  %1, %%eax\n" \
-		"movl %%eax, %%cr0\n" \
-		: : "i" (em_rst), "i" (mp_ne_set) : "eax");
-	}
+	asm ("fninit\n" \
+	"movl %%cr0, %%eax\n" \
+	"andl %0, %%eax\n" \
+	"orl  %1, %%eax\n" \
+	"movl %%eax, %%cr0\n" \
+	: : "i" (em_rst), "i" (mp_ne_set) : "eax");
+}
 
+void cpu_reinit_fpu(void)
+{
+	asm ("fninit\n");
+}
+
+static void setup_identity(void)
+{
 	/* identify CPU via cpuid and store the decoded info into gd->arch */
 	if (has_cpuid()) {
 		struct cpu_device_id cpu;
@@ -340,48 +406,84 @@ int x86_cpu_init_f(void)
 
 		gd->arch.has_mtrr = has_mtrr();
 	}
-	/* Don't allow PCI region 3 to use memory in the 2-4GB memory hole */
-	gd->pci_ram_top = 0x80000000U;
+}
+
+static void setup_mtrr(void)
+{
+	u64 mtrr_cap;
 
 	/* Configure fixed range MTRRs for some legacy regions */
-	if (gd->arch.has_mtrr) {
-		u64 mtrr_cap;
+	if (!gd->arch.has_mtrr || !ll_boot_init())
+		return;
 
-		mtrr_cap = native_read_msr(MTRR_CAP_MSR);
-		if (mtrr_cap & MTRR_CAP_FIX) {
-			/* Mark the VGA RAM area as uncacheable */
-			native_write_msr(MTRR_FIX_16K_A0000_MSR,
-					 MTRR_FIX_TYPE(MTRR_TYPE_UNCACHEABLE),
-					 MTRR_FIX_TYPE(MTRR_TYPE_UNCACHEABLE));
+	mtrr_cap = native_read_msr(MTRR_CAP_MSR);
+	if (mtrr_cap & MTRR_CAP_FIX) {
+		/* Mark the VGA RAM area as uncacheable */
+		native_write_msr(MTRR_FIX_16K_A0000_MSR,
+				 MTRR_FIX_TYPE(MTRR_TYPE_UNCACHEABLE),
+				 MTRR_FIX_TYPE(MTRR_TYPE_UNCACHEABLE));
 
-			/*
-			 * Mark the PCI ROM area as cacheable to improve ROM
-			 * execution performance.
-			 */
-			native_write_msr(MTRR_FIX_4K_C0000_MSR,
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
-			native_write_msr(MTRR_FIX_4K_C8000_MSR,
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
-			native_write_msr(MTRR_FIX_4K_D0000_MSR,
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
-			native_write_msr(MTRR_FIX_4K_D8000_MSR,
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
-					 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
+		/*
+		 * Mark the PCI ROM area as cacheable to improve ROM
+		 * execution performance.
+		 */
+		native_write_msr(MTRR_FIX_4K_C0000_MSR,
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
+		native_write_msr(MTRR_FIX_4K_C8000_MSR,
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
+		native_write_msr(MTRR_FIX_4K_D0000_MSR,
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
+		native_write_msr(MTRR_FIX_4K_D8000_MSR,
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK),
+				 MTRR_FIX_TYPE(MTRR_TYPE_WRBACK));
 
-			/* Enable the fixed range MTRRs */
-			msr_setbits_64(MTRR_DEF_TYPE_MSR, MTRR_DEF_TYPE_FIX_EN);
-		}
+		/* Enable the fixed range MTRRs */
+		msr_setbits_64(MTRR_DEF_TYPE_MSR, MTRR_DEF_TYPE_FIX_EN);
 	}
+}
 
-#ifdef CONFIG_I8254_TIMER
-	/* Set up the i8254 timer if required */
-	i8254_init();
-#endif
+int x86_cpu_init_tpl(void)
+{
+	setup_cpu_features();
+	setup_identity();
 
 	return 0;
+}
+
+int x86_cpu_init_f(void)
+{
+	if (ll_boot_init())
+		setup_cpu_features();
+	setup_identity();
+	setup_mtrr();
+
+	/* Set up the i8254 timer if required */
+	if (IS_ENABLED(CONFIG_I8254_TIMER))
+		i8254_init();
+
+	return 0;
+}
+
+int x86_cpu_reinit_f(void)
+{
+	long addr;
+
+	setup_identity();
+	addr = locate_coreboot_table();
+	if (addr >= 0) {
+		gd->arch.coreboot_table = addr;
+		gd->flags |= GD_FLG_SKIP_LL_INIT;
+	}
+
+	return 0;
+}
+
+void x86_get_identity_for_timer(void)
+{
+	setup_identity();
 }
 
 void x86_enable_caches(void)
@@ -463,7 +565,16 @@ int cpu_has_64bit(void)
 		has_long_mode();
 }
 
+/* Base address for page tables used for 64-bit mode */
+#define PAGETABLE_BASE		0x80000
 #define PAGETABLE_SIZE		(6 * 4096)
+
+#define _PRES BIT(0)	/* present */
+#define _RW   BIT(1)	/* write allowed */
+#define _US   BIT(2)	/* user-access allowed */
+#define _A    BIT(5)	/* has been accessed */
+#define _DT   BIT(6)	/* has been written to */
+#define _PS   BIT(7)	/* indicates 2MB page size here */
 
 /**
  * build_pagetable() - build a flat 4GiB page table structure for 64-bti mode
@@ -477,15 +588,17 @@ static void build_pagetable(uint32_t *pgtable)
 	memset(pgtable, '\0', PAGETABLE_SIZE);
 
 	/* Level 4 needs a single entry */
-	pgtable[0] = (ulong)&pgtable[1024] + 7;
+	pgtable[0] = (ulong)&pgtable[1024] + _PRES + _RW + _US + _A;
 
 	/* Level 3 has one 64-bit entry for each GiB of memory */
 	for (i = 0; i < 4; i++)
-		pgtable[1024 + i * 2] = (ulong)&pgtable[2048] + 0x1000 * i + 7;
+		pgtable[1024 + i * 2] = (ulong)&pgtable[2048] + 0x1000 * i +
+			_PRES + _RW + _US + _A;
 
 	/* Level 2 has 2048 64-bit entries, each repesenting 2MiB */
 	for (i = 0; i < 2048; i++)
-		pgtable[2048 + i * 2] = 0x183 + (i << 21UL);
+		pgtable[2048 + i * 2] = _PRES + _RW + _US + _PS + _A +  _DT +
+					 (i << 21UL);
 }
 
 int cpu_jump_to_64bit(ulong setup_base, ulong target)
@@ -504,95 +617,33 @@ int cpu_jump_to_64bit(ulong setup_base, ulong target)
 }
 
 /*
- * Jump from SPL to U-Boot
+ * cpu_jump_to_64bit_uboot() - Jump from SPL to U-Boot
  *
- * This function is work-in-progress with many issues to resolve.
- *
- * It works by setting up several regions:
- *   ptr      - a place to put the code that jumps into 64-bit mode
- *   gdt      - a place to put the global descriptor table
- *   pgtable  - a place to put the page tables
- *
- * The cpu_call64() code is copied from ROM and then manually patched so that
- * it has the correct GDT address in RAM. U-Boot is copied from ROM into
- * its pre-relocation address. Then we jump to the cpu_call64() code in RAM,
- * which changes to 64-bit mode and starts U-Boot.
+ * It works by setting up page tables and calling the code to enter 64-bit long
+ * mode
  */
 int cpu_jump_to_64bit_uboot(ulong target)
 {
-	typedef void (*func_t)(ulong pgtable, ulong setup_base, ulong target);
 	uint32_t *pgtable;
-	func_t func;
 
-	/* TODO(sjg@chromium.org): Find a better place for this */
-	pgtable = (uint32_t *)0x1000000;
-	if (!pgtable)
-		return -ENOMEM;
-
+	pgtable = (uint32_t *)PAGETABLE_BASE;
 	build_pagetable(pgtable);
 
-	/* TODO(sjg@chromium.org): Find a better place for this */
-	char *ptr = (char *)0x3000000;
-	char *gdt = (char *)0x3100000;
-
-	extern char gdt64[];
-
-	memcpy(ptr, cpu_call64, 0x1000);
-	memcpy(gdt, gdt64, 0x100);
-
-	/*
-	 * TODO(sjg@chromium.org): This manually inserts the pointers into
-	 * the code. Tidy this up to avoid this.
-	 */
-	func = (func_t)ptr;
-	ulong ofs = (ulong)cpu_call64 - (ulong)ptr;
-	*(ulong *)(ptr + 7) = (ulong)gdt;
-	*(ulong *)(ptr + 0xc) = (ulong)gdt + 2;
-	*(ulong *)(ptr + 0x13) = (ulong)gdt;
-	*(ulong *)(ptr + 0x117 - 0xd4) -= ofs;
-
-	/*
-	 * Copy U-Boot from ROM
-	 * TODO(sjg@chromium.org): Figure out a way to get the text base
-	 * correctly here, and in the device-tree binman definition.
-	 *
-	 * Also consider using FIT so we get the correct image length and
-	 * parameters.
-	 */
-	memcpy((char *)target, (char *)0xfff00000, 0x100000);
-
 	/* Jump to U-Boot */
-	func((ulong)pgtable, 0, (ulong)target);
+	cpu_call64(PAGETABLE_BASE, 0, (ulong)target);
 
 	return -EFAULT;
 }
 
-#ifdef CONFIG_SMP
-static int enable_smis(struct udevice *cpu, void *unused)
-{
-	return 0;
-}
-
-static struct mp_flight_record mp_steps[] = {
-	MP_FR_BLOCK_APS(mp_init_cpu, NULL, mp_init_cpu, NULL),
-	/* Wait for APs to finish initialization before proceeding */
-	MP_FR_BLOCK_APS(NULL, NULL, enable_smis, NULL),
-};
-
 int x86_mp_init(void)
 {
-	struct mp_params mp_params;
+	int ret;
 
-	mp_params.parallel_microcode_load = 0,
-	mp_params.flight_plan = &mp_steps[0];
-	mp_params.num_records = ARRAY_SIZE(mp_steps);
-	mp_params.microcode_pointer = 0;
-
-	if (mp_init(&mp_params)) {
+	ret = mp_init();
+	if (ret) {
 		printf("Warning: MP init failure\n");
-		return -EIO;
+		return log_ret(ret);
 	}
 
 	return 0;
 }
-#endif

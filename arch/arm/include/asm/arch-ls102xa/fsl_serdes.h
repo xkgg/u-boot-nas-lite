@@ -1,13 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2014 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __FSL_SERDES_H
 #define __FSL_SERDES_H
 
-#include <config.h>
+#include <linux/types.h>
 
 enum srds_prtcl {
 	/*

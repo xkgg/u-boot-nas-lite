@@ -1,13 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _ASM_ARCH_PCC_H
 #define _ASM_ARCH_PCC_H
 
-#include <common.h>
 #include <asm/arch/scg.h>
 
 /* PCC2 */
@@ -280,7 +278,6 @@ enum pcc3_entry {
 	RSVD127_PCC3_SLOT		= 127,
 };
 
-
 /* PCC registers */
 #define PCC_PR_OFFSET	31
 #define PCC_PR_MASK		(0x1 << PCC_PR_OFFSET)
@@ -290,11 +287,10 @@ enum pcc3_entry {
 #define PCC_INUSE_MASK		(0x1 << PCC_INUSE_OFFSET)
 #define PCC_PCS_OFFSET	24
 #define PCC_PCS_MASK	(0x7 << PCC_PCS_OFFSET)
-#define PCC_FRAC_OFFSET	4
+#define PCC_FRAC_OFFSET	3
 #define PCC_FRAC_MASK	(0x1 << PCC_FRAC_OFFSET)
 #define PCC_PCD_OFFSET	0
-#define PCC_PCD_MASK	(0xf << PCC_PCD_OFFSET)
-
+#define PCC_PCD_MASK	(0x7 << PCC_PCD_OFFSET)
 
 enum pcc_clksrc_type {
 	CLKSRC_PER_PLAT = 0,
@@ -354,7 +350,6 @@ enum pcc_clk {
 	PER_CLK_GPU3D,
 	PER_CLK_GPU2D,
 };
-
 
 /* This structure keeps info for each pcc slot */
 struct pcc_entry {

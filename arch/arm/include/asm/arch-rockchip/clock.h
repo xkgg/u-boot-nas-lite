@@ -1,16 +1,26 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * (C) Copyright 2015 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #ifndef _ASM_ARCH_CLOCK_H
 #define _ASM_ARCH_CLOCK_H
 
+#include <linux/types.h>
+
+struct udevice;
+
 /* define pll mode */
 #define RKCLK_PLL_MODE_SLOW		0
 #define RKCLK_PLL_MODE_NORMAL		1
 #define RKCLK_PLL_MODE_DEEP		2
+
+/*
+ * PLL flags
+ */
+#define ROCKCHIP_PLL_SYNC_RATE		BIT(0)
+/* normal mode only. now only for pll_rk3036, pll_rk3328 type */
+#define ROCKCHIP_PLL_FIXED_MODE		BIT(1)
 
 enum {
 	ROCKCHIP_SYSCON_NOC,
@@ -124,28 +134,6 @@ struct rockchip_cpu_rate_table {
 	unsigned int pclk_div;
 };
 
-#ifdef CONFIG_ROCKCHIP_IMAGE_TINY
-static inline ulong rockchip_pll_get_rate(struct rockchip_pll_clock *pll,
-					  void __iomem *base,
-					  ulong pll_id)
-{
-	return 0;
-}
-
-static inline int rockchip_pll_set_rate(struct rockchip_pll_clock *pll,
-					void __iomem *base, ulong pll_id,
-					ulong drate)
-{
-	return 0;
-}
-
-static inline const struct rockchip_cpu_rate_table *
-rockchip_get_cpu_settings(struct rockchip_cpu_rate_table *cpu_table,
-			  ulong rate)
-{
-	return NULL;
-}
-#else
 int rockchip_pll_set_rate(struct rockchip_pll_clock *pll,
 			  void __iomem *base, ulong clk_id,
 			  ulong drate);
@@ -154,7 +142,6 @@ ulong rockchip_pll_get_rate(struct rockchip_pll_clock *pll,
 const struct rockchip_cpu_rate_table *
 rockchip_get_cpu_settings(struct rockchip_cpu_rate_table *cpu_table,
 			  ulong rate);
-#endif
 
 static inline int rk_pll_id(enum rk_clk_id clk_id)
 {
@@ -166,12 +153,6 @@ struct sysreset_reg {
 	unsigned int glb_srst_snd_value;
 };
 
-struct softreset_reg {
-	void __iomem *base;
-	unsigned int sf_reset_offset;
-	unsigned int sf_reset_num;
-};
-
 /**
  * clk_get_divisor() - Calculate the required clock divisior
  *
@@ -180,7 +161,7 @@ struct softreset_reg {
  *
  * @input_rate:		Input clock rate in Hz
  * @output_rate:	Output clock rate in Hz
- * @return divisor register value to use
+ * Return: divisor register value to use
  */
 static inline u32 clk_get_divisor(ulong input_rate, uint output_rate)
 {
@@ -195,24 +176,83 @@ static inline u32 clk_get_divisor(ulong input_rate, uint output_rate)
 /**
  * rockchip_get_cru() - get a pointer to the clock/reset unit registers
  *
- * @return pointer to registers, or -ve error on error
+ * Return: pointer to registers, or -ve error on error
  */
 void *rockchip_get_cru(void);
 
 /**
  * rockchip_get_pmucru() - get a pointer to the clock/reset unit registers
  *
- * @return pointer to registers, or -ve error on error
+ * Return: pointer to registers, or -ve error on error
  */
 void *rockchip_get_pmucru(void);
 
-struct rk3288_cru;
+struct rockchip_cru;
 struct rk3288_grf;
 
-void rk3288_clk_configure_cpu(struct rk3288_cru *cru, struct rk3288_grf *grf);
+void rk3288_clk_configure_cpu(struct rockchip_cru *cru, struct rk3288_grf *grf);
 
 int rockchip_get_clk(struct udevice **devp);
 
-int rockchip_get_scmi_clk(struct udevice **devp);
+/*
+ * rockchip_reset_bind() - Bind soft reset device as child of clock device
+ *
+ * @pdev: clock udevice
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rockchip_reset_bind(struct udevice *pdev, u32 reg_offset, u32 reg_number);
+/*
+ * rockchip_reset_bind_lut() - Bind soft reset device as child of clock device
+ *			       using a dedicated SoC lookup table
+ * @pdev: clock udevice
+ * @lookup_table: register lookup_table dedicated to SoC
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rockchip_reset_bind_lut(struct udevice *pdev, const int *lookup_table,
+			    u32 reg_offset, u32 reg_number);
+/*
+ * rk3506_reset_bind_lut() - Bind soft reset device as child of clock device
+ *			     using dedicated RK3506 lookup table
+ *
+ * @pdev: clock udevice
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rk3506_reset_bind_lut(struct udevice *pdev, u32 reg_offset, u32 reg_number);
+/*
+ * rk3528_reset_bind_lut() - Bind soft reset device as child of clock device
+ *			     using dedicated RK3528 lookup table
+ *
+ * @pdev: clock udevice
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rk3528_reset_bind_lut(struct udevice *pdev, u32 reg_offset, u32 reg_number);
+/*
+ * rk3576_reset_bind_lut() - Bind soft reset device as child of clock device
+ *			     using dedicated RK3576 lookup table
+ *
+ * @pdev: clock udevice
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rk3576_reset_bind_lut(struct udevice *pdev, u32 reg_offset, u32 reg_number);
+/*
+ * rk3588_reset_bind_lut() - Bind soft reset device as child of clock device
+ *			     using dedicated RK3588 lookup table
+ *
+ * @pdev: clock udevice
+ * @reg_offset: the first offset in cru for softreset registers
+ * @reg_number: the reg numbers of softreset registers
+ * Return: 0 success, or error value
+ */
+int rk3588_reset_bind_lut(struct udevice *pdev, u32 reg_offset, u32 reg_number);
 
 #endif

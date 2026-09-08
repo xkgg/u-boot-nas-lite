@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000-2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -17,13 +16,18 @@
  * Wolfgang Denk <wd@denx.de>
  */
 
-#include <common.h>
+#include <cpu_func.h>
+#include <display_options.h>
+#include <net.h>
+#include <time.h>
+#include <vsprintf.h>
 #include <watchdog.h>
 #include <command.h>
 #include <mpc8xx.h>
 #include <netdev.h>
 #include <asm/cache.h>
 #include <asm/cpm_8xx.h>
+#include <asm/global_data.h>
 #include <linux/compiler.h>
 #include <asm/io.h>
 
@@ -33,70 +37,6 @@
 #endif
 
 DECLARE_GLOBAL_DATA_PTR;
-
-static int check_CPU(long clock, uint pvr, uint immr)
-{
-	immap_t __iomem *immap = (immap_t __iomem *)(immr & 0xFFFF0000);
-	uint k;
-	char buf[32];
-
-	/* the highest 16 bits should be 0x0050 for a 860 */
-
-	if ((pvr >> 16) != 0x0050)
-		return -1;
-
-	k = (immr << 16) |
-	    in_be16(&immap->im_cpm.cp_dparam16[PROFF_REVNUM / sizeof(u16)]);
-
-	/*
-	 * Some boards use sockets so different CPUs can be used.
-	 * We have to check chip version in run time.
-	 */
-	switch (k) {
-		/* MPC866P/MPC866T/MPC859T/MPC859DSL/MPC852T */
-	case 0x08010004:		/* Rev. A.0 */
-		printf("MPC866xxxZPnnA");
-		break;
-	case 0x08000003:		/* Rev. 0.3 */
-		printf("MPC866xxxZPnn");
-		break;
-	case 0x09000000:		/* 870/875/880/885 */
-		puts("MPC885ZPnn");
-		break;
-
-	default:
-		printf("unknown MPC86x (0x%08x)", k);
-		break;
-	}
-
-	printf(" at %s MHz: ", strmhz(buf, clock));
-
-	print_size(checkicache(), " I-Cache ");
-	print_size(checkdcache(), " D-Cache");
-
-	/* do we have a FEC (860T/P or 852/859/866/885)? */
-
-	out_be32(&immap->im_cpm.cp_fec.fec_addr_low, 0x12345678);
-	if (in_be32(&immap->im_cpm.cp_fec.fec_addr_low) == 0x12345678)
-		printf(" FEC present");
-
-	putc('\n');
-
-	return 0;
-}
-
-/* ------------------------------------------------------------------------- */
-
-int checkcpu(void)
-{
-	ulong clock = gd->cpu_clk;
-	uint immr = get_immr(0);	/* Return full IMMR contents */
-	uint pvr = get_pvr();
-
-	puts("CPU:   ");
-
-	return check_CPU(clock, pvr, immr);
-}
 
 /* ------------------------------------------------------------------------- */
 /* L1 i-cache                                                                */
@@ -142,7 +82,7 @@ int checkicache(void)
 /* L1 d-cache                                                                */
 /* call with cache disabled                                                  */
 
-int checkdcache(void)
+static int checkdcache(void)
 {
 	immap_t __iomem *immap = (immap_t __iomem *)CONFIG_SYS_IMMR;
 	memctl8xx_t __iomem *memctl = &immap->im_memctl;
@@ -174,6 +114,70 @@ int checkdcache(void)
 	return lines << 4;
 };
 
+static int check_CPU(long clock, uint pvr, uint immr)
+{
+	immap_t __iomem *immap = (immap_t __iomem *)CONFIG_SYS_IMMR;
+	uint k;
+	char buf[32];
+
+	/* the highest 16 bits should be 0x0050 for a 860 */
+
+	if (PVR_VER(pvr) != PVR_VER(PVR_8xx))
+		return -1;
+
+	k = (immr << 16) |
+	    in_be16((u16 __iomem *)&immap->im_cpm.cp_dpmem[PROFF_REVNUM]);
+
+	/*
+	 * Some boards use sockets so different CPUs can be used.
+	 * We have to check chip version in run time.
+	 */
+	switch (k) {
+		/* MPC866P/MPC866T/MPC859T/MPC859DSL/MPC852T */
+	case 0x08010004:		/* Rev. A.0 */
+		printf("MPC866xxxZPnnA");
+		break;
+	case 0x08000003:		/* Rev. 0.3 */
+		printf("MPC866xxxZPnn");
+		break;
+	case 0x09000000:		/* 870/875/880/885 */
+		puts("MPC885ZPnn");
+		break;
+
+	default:
+		printf("unknown MPC86x (0x%08x)", k);
+		break;
+	}
+
+	printf(" at %s MHz: ", strmhz(buf, clock));
+
+	print_size(checkicache(), " I-Cache ");
+	print_size(checkdcache(), " D-Cache");
+
+	/* do we have a FEC (860T/P or 852/859/866/885)? */
+
+	out_be32(&immap->im_cpm.cp_fec.fec_addr_low, 0x12345678);
+	if (in_be32(&immap->im_cpm.cp_fec.fec_addr_low) == 0x12345678)
+		printf(" FEC present");
+
+	putc('\n');
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------------- */
+
+int checkcpu(void)
+{
+	ulong clock = gd->cpu_clk;
+	uint immr = get_immr();	/* Return full IMMR contents */
+	uint pvr = get_pvr();
+
+	puts("CPU:   ");
+
+	return check_CPU(clock, pvr, immr);
+}
+
 /* ------------------------------------------------------------------------- */
 
 void upmconfig(uint upm, uint *table, uint size)
@@ -192,7 +196,7 @@ void upmconfig(uint upm, uint *table, uint size)
 
 /* ------------------------------------------------------------------------- */
 
-int do_reset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_reset(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	ulong msr, addr;
 
@@ -211,19 +215,12 @@ int do_reset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	/*
 	 * Trying to execute the next instruction at a non-existing address
 	 * should cause a machine check, resulting in reset
-	 */
-#ifdef CONFIG_SYS_RESET_ADDRESS
-	addr = CONFIG_SYS_RESET_ADDRESS;
-#else
-	/*
+	 *
 	 * note: when CONFIG_SYS_MONITOR_BASE points to a RAM address,
 	 * CONFIG_SYS_MONITOR_BASE - sizeof (ulong) is usually a valid address.
-	 * Better pick an address known to be invalid on your system and assign
-	 * it to CONFIG_SYS_RESET_ADDRESS.
-	 * "(ulong)-1" used to be a good choice for many systems...
 	 */
 	addr = CONFIG_SYS_MONITOR_BASE - sizeof(ulong);
-#endif
+
 	((void (*)(void)) addr)();
 	return 1;
 }
@@ -237,8 +234,7 @@ int do_reset(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
  */
 unsigned long get_tbclk(void)
 {
-	uint immr = get_immr(0);	/* Return full IMMR contents */
-	immap_t __iomem *immap = (immap_t __iomem *)(immr & 0xFFFF0000);
+	immap_t __iomem *immap = (immap_t __iomem *)CONFIG_SYS_IMMR;
 	ulong oscclk, factor, pll;
 
 	if (in_be32(&immap->im_clkrst.car_sccr) & SCCR_TBS)
@@ -269,41 +265,4 @@ unsigned long get_tbclk(void)
 		return oscclk / 4;
 
 	return oscclk / 16;
-}
-
-/* ------------------------------------------------------------------------- */
-
-#if defined(CONFIG_WATCHDOG)
-void watchdog_reset(void)
-{
-	int re_enable = disable_interrupts();
-
-	reset_8xx_watchdog((immap_t __iomem *)CONFIG_SYS_IMMR);
-	if (re_enable)
-		enable_interrupts();
-}
-#endif /* CONFIG_WATCHDOG */
-
-#if defined(CONFIG_WATCHDOG)
-
-void reset_8xx_watchdog(immap_t __iomem *immr)
-{
-	/*
-	 * All other boards use the MPC8xx Internal Watchdog
-	 */
-	out_be16(&immr->im_siu_conf.sc_swsr, 0x556c);	/* write magic1 */
-	out_be16(&immr->im_siu_conf.sc_swsr, 0xaa39);	/* write magic2 */
-}
-#endif /* CONFIG_WATCHDOG */
-
-/*
- * Initializes on-chip ethernet controllers.
- * to override, implement board_eth_init()
- */
-int cpu_eth_init(bd_t *bis)
-{
-#if defined(CONFIG_MPC8XX_FEC)
-	fec_initialize(bis);
-#endif
-	return 0;
 }

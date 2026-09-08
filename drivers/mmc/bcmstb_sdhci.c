@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2018  Cisco Systems, Inc.
+ * (C) Copyright 2019  Synamedia
  *
  * Author: Thomas Fitzsimmons <fitzsim@fitzsim.org>
  */
 
-#include <common.h>
+#include <dm.h>
 #include <mach/sdhci.h>
 #include <malloc.h>
 #include <sdhci.h>
@@ -36,32 +37,124 @@
  */
 #define BCMSTB_SDHCI_MINIMUM_CLOCK_FREQUENCY	400000
 
-static char *BCMSTB_SDHCI_NAME = "bcmstb-sdhci";
+#define SDIO_CFG_CTRL				0x0
+#define  SDIO_CFG_CTRL_SDCD_N_TEST_EN		BIT(31)
+#define  SDIO_CFG_CTRL_SDCD_N_TEST_LEV		BIT(30)
 
-/*
- * This driver has only been tested with eMMC devices; SD devices may
- * not work.
- */
-int bcmstb_sdhci_init(phys_addr_t regbase)
+#define SDIO_CFG_SD_PIN_SEL			0x44
+#define  SDIO_CFG_SD_PIN_SEL_MASK		0x3
+#define  SDIO_CFG_SD_PIN_SEL_CARD		BIT(1)
+
+struct sdhci_bcmstb_plat {
+	struct mmc_config cfg;
+	struct mmc mmc;
+};
+
+struct sdhci_brcmstb_dev_priv {
+	int (*init)(struct udevice *dev);
+};
+
+static int sdhci_brcmstb_init_2712(struct udevice *dev)
 {
-	struct sdhci_host *host = NULL;
+	struct sdhci_bcmstb_plat *plat = dev_get_plat(dev);
+	void *cfg_regs;
+	u32 reg;
 
-	host = (struct sdhci_host *)malloc(sizeof(struct sdhci_host));
-	if (!host) {
-		printf("%s: Failed to allocate memory\n", __func__);
-		return 1;
+	/* Map in the non-standard CFG registers */
+	cfg_regs = dev_remap_addr_name(dev, "cfg");
+	if (!cfg_regs)
+		return -ENOENT;
+
+	if ((plat->cfg.host_caps & MMC_CAP_NONREMOVABLE) ||
+	    (plat->cfg.host_caps & MMC_CAP_NEEDS_POLL)) {
+		/* Force presence */
+		reg = readl(cfg_regs + SDIO_CFG_CTRL);
+		reg &= ~SDIO_CFG_CTRL_SDCD_N_TEST_LEV;
+		reg |= SDIO_CFG_CTRL_SDCD_N_TEST_EN;
+		writel(reg, cfg_regs + SDIO_CFG_CTRL);
+	} else {
+		/* Enable card detection line */
+		reg = readl(cfg_regs + SDIO_CFG_SD_PIN_SEL);
+		reg &= ~SDIO_CFG_SD_PIN_SEL_MASK;
+		reg |= SDIO_CFG_SD_PIN_SEL_CARD;
+		writel(reg, cfg_regs + SDIO_CFG_SD_PIN_SEL);
 	}
-	memset(host, 0, sizeof(*host));
 
-	host->name = BCMSTB_SDHCI_NAME;
-	host->ioaddr = (void *)regbase;
-	host->quirks = 0;
-
-	host->cfg.part_type = PART_TYPE_DOS;
-
-	host->version = sdhci_readw(host, SDHCI_HOST_VERSION);
-
-	return add_sdhci(host,
-			 BCMSTB_SDHCI_MAXIMUM_CLOCK_FREQUENCY,
-			 BCMSTB_SDHCI_MINIMUM_CLOCK_FREQUENCY);
+	return 0;
 }
+
+static int sdhci_bcmstb_bind(struct udevice *dev)
+{
+	struct sdhci_bcmstb_plat *plat = dev_get_plat(dev);
+
+	return sdhci_bind(dev, &plat->mmc, &plat->cfg);
+}
+
+/* No specific SDHCI operations are required */
+static const struct sdhci_ops bcmstb_sdhci_ops = { 0 };
+
+static int sdhci_bcmstb_probe(struct udevice *dev)
+{
+	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
+	struct sdhci_bcmstb_plat *plat = dev_get_plat(dev);
+	struct sdhci_host *host = dev_get_priv(dev);
+	struct sdhci_brcmstb_dev_priv *dev_priv;
+	fdt_addr_t base;
+	int ret;
+
+	dev_priv = (struct sdhci_brcmstb_dev_priv *)dev_get_driver_data(dev);
+
+	base = dev_read_addr(dev);
+	if (base == FDT_ADDR_T_NONE)
+		return -EINVAL;
+
+	host->name = dev->name;
+	host->ioaddr = (void *)base;
+
+	ret = mmc_of_parse(dev, &plat->cfg);
+	if (ret)
+		return ret;
+
+	host->mmc = &plat->mmc;
+	host->mmc->dev = dev;
+	host->ops = &bcmstb_sdhci_ops;
+
+	ret = sdhci_setup_cfg(&plat->cfg, host,
+			      BCMSTB_SDHCI_MAXIMUM_CLOCK_FREQUENCY,
+			      BCMSTB_SDHCI_MINIMUM_CLOCK_FREQUENCY);
+	if (ret)
+		return ret;
+
+	upriv->mmc = &plat->mmc;
+	host->mmc->priv = host;
+
+	if (dev_priv && dev_priv->init) {
+		ret = dev_priv->init(dev);
+		if (ret)
+			return ret;
+	}
+
+	return sdhci_probe(dev);
+}
+
+static const struct sdhci_brcmstb_dev_priv match_priv_2712 = {
+	.init = sdhci_brcmstb_init_2712,
+};
+
+static const struct udevice_id sdhci_bcmstb_match[] = {
+	{ .compatible = "brcm,bcm2712-sdhci", .data = (ulong)&match_priv_2712 },
+	{ .compatible = "brcm,bcm7425-sdhci" },
+	{ .compatible = "brcm,sdhci-brcmstb" },
+	{ }
+};
+
+U_BOOT_DRIVER(sdhci_bcmstb) = {
+	.name = "sdhci-bcmstb",
+	.id = UCLASS_MMC,
+	.of_match = sdhci_bcmstb_match,
+	.ops = &sdhci_ops,
+	.bind = sdhci_bcmstb_bind,
+	.probe = sdhci_bcmstb_probe,
+	.priv_auto	= sizeof(struct sdhci_host),
+	.plat_auto	= sizeof(struct sdhci_bcmstb_plat),
+};

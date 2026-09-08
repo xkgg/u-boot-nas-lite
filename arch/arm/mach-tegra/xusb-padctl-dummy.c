@@ -1,12 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014, NVIDIA CORPORATION.  All rights reserved.
- *
- * SPDX-License-Identifier: GPL-2.0
  */
 
-#include <common.h>
 #include <errno.h>
 
+#include <linux/compiler.h>
 #include <asm/arch-tegra/xusb-padctl.h>
 
 struct tegra_xusb_phy * __weak tegra_xusb_phy_get(unsigned int type)
@@ -35,5 +34,9 @@ int __weak tegra_xusb_phy_unprepare(struct tegra_xusb_phy *phy)
 }
 
 void __weak tegra_xusb_padctl_init(void)
+{
+}
+
+void __weak tegra_xusb_padctl_exit(void)
 {
 }

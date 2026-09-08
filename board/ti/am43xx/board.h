@@ -1,17 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * board.h
  *
  * TI AM437x boards information header
  * Derived from AM335x board.
  *
- * Copyright (C) 2013, Texas Instruments, Incorporated - http://www.ti.com/
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2013, Texas Instruments, Incorporated - https://www.ti.com/
  */
 
 #ifndef _BOARD_H_
 #define _BOARD_H_
 
+#include <linux/string.h>
 #include <asm/arch/omap.h>
 
 #define DEV_ATTR_MAX_OFFSET    5

@@ -1,8 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0+
 #
 # (C) Copyright 2015 Mateusz Kulikowski <mateusz.kulikowski@gmail.com>
-#
-# SPDX-License-Identifier:	GPL-2.0+
-#
 
-obj-y += clock-apq8016.o
-obj-y += sysmap-apq8016.o
+obj-y += board.o
+obj-$(CONFIG_EFI_HAVE_CAPSULE_SUPPORT) += capsule_update.o
+obj-$(CONFIG_OF_LIVE) += of_fixup.o

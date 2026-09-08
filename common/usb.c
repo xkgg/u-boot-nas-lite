@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Most of this source has been derived from the Linux USB
  * project:
@@ -13,8 +14,6 @@
  *
  * Adapted for U-Boot:
  * (C) Copyright 2001 Denis Peter, MPL AG Switzerland
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -26,9 +25,12 @@
  *
  * For each transfer (except "Interrupt") we wait for completion.
  */
-#include <common.h>
 #include <command.h>
 #include <dm.h>
+#include <dm/device_compat.h>
+#include <env.h>
+#include <log.h>
+#include <malloc.h>
 #include <memalign.h>
 #include <asm/processor.h>
 #include <linux/compiler.h>
@@ -37,19 +39,16 @@
 #include <asm/unaligned.h>
 #include <errno.h>
 #include <usb.h>
+#include <linux/delay.h>
 
 #define USB_BUFSIZ	512
 
 static int asynch_allowed;
-char usb_started; /* flag for the started/stopped USB status */
+bool usb_started; /* flag for the started/stopped USB status */
 
 #if !CONFIG_IS_ENABLED(DM_USB)
 static struct usb_device usb_dev[USB_MAX_DEVICE];
 static int dev_index;
-
-#ifndef CONFIG_USB_MAX_CONTROLLER_COUNT
-#define CONFIG_USB_MAX_CONTROLLER_COUNT 1
-#endif
 
 /***************************************************************************
  * Init USB Device
@@ -172,6 +171,12 @@ int usb_detect_change(void)
 	return change;
 }
 
+/* Lock or unlock async schedule on the controller */
+__weak int usb_lock_async(struct usb_device *dev, int lock)
+{
+	return 0;
+}
+
 /*
  * disables the asynch behaviour of the control message. This is used for data
  * transfers that uses the exclusiv access to the control and bulk messages.
@@ -185,7 +190,6 @@ int usb_disable_asynch(int disable)
 	return old_value;
 }
 #endif /* !CONFIG_IS_ENABLED(DM_USB) */
-
 
 /*-------------------------------------------------------------------
  * Message wrappers.
@@ -210,8 +214,9 @@ int usb_int_msg(struct usb_device *dev, unsigned long pipe,
  * clear keyboards LEDs). For data transfers, (storage transfers) we don't
  * allow control messages with 0 timeout, by previousely resetting the flag
  * asynch_allowed (usb_disable_asynch(1)).
- * returns the transferred length if OK or -1 if error. The transferred length
- * and the current status are stored in the dev->act_len and dev->status.
+ * returns the transferred length if OK, otherwise a negative error code. The
+ * transferred length and the current status are stored in the dev->act_len and
+ * dev->status.
  */
 int usb_control_msg(struct usb_device *dev, unsigned int pipe,
 			unsigned char request, unsigned char requesttype,
@@ -253,14 +258,14 @@ int usb_control_msg(struct usb_device *dev, unsigned int pipe,
 			break;
 		mdelay(1);
 	}
+
+	if (timeout == 0)
+		return -ETIMEDOUT;
+
 	if (dev->status)
 		return -1;
 
-	if(dev->descriptor.idVendor == 0x058f && dev->descriptor.idProduct == 0x6387)
-		udelay(200);
-
 	return dev->act_len;
-
 }
 
 /*-------------------------------------------------------------------
@@ -287,7 +292,6 @@ int usb_bulk_msg(struct usb_device *dev, unsigned int pipe,
 	else
 		return -EIO;
 }
-
 
 /*-------------------------------------------------------------------
  * Max Packet stuff
@@ -443,12 +447,13 @@ static int usb_parse_config(struct usb_device *dev,
 			}
 			break;
 		case USB_DT_ENDPOINT:
-			if (head->bLength != USB_DT_ENDPOINT_SIZE) {
+			if (head->bLength != USB_DT_ENDPOINT_SIZE &&
+			    head->bLength != USB_DT_ENDPOINT_AUDIO_SIZE) {
 				printf("ERROR: Invalid USB EP length (%d)\n",
 					head->bLength);
 				break;
 			}
-			if (index + USB_DT_ENDPOINT_SIZE >
+			if (index + head->bLength >
 			    dev->config.desc.wTotalLength) {
 				puts("USB EP descriptor overflowed buffer!\n");
 				break;
@@ -520,20 +525,6 @@ static int usb_parse_config(struct usb_device *dev,
 		index += head->bLength;
 		head = (struct usb_descriptor_header *)&buffer[index];
 	}
-
-	/**
-	 * Some odd devices respond the Endpoint descriptor items are less
-	 * then the bNumEndpoints in Interface descriptor, so fix it here.
-	 */
-	for (ifno = 0; ifno < dev->config.no_of_if; ifno++) {
-		if_desc = &dev->config.if_desc[ifno];
-		if (if_desc->desc.bNumEndpoints != if_desc->no_of_ep) {
-			printf("WARN: interface %d has %d endpoint descriptor, "
-			       "different from the interface descriptor's value: %d\n",
-			       ifno, if_desc->no_of_ep, if_desc->desc.bNumEndpoints);
-			if_desc->desc.bNumEndpoints = if_desc->no_of_ep;
-		}
-	}
 	return 0;
 }
 
@@ -567,17 +558,35 @@ int usb_clear_halt(struct usb_device *dev, int pipe)
 	return 0;
 }
 
-
 /**********************************************************************
  * get_descriptor type
  */
 static int usb_get_descriptor(struct usb_device *dev, unsigned char type,
 			unsigned char index, void *buf, int size)
 {
-	return usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
-			       USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
-			       (type << 8) + index, 0, buf, size,
-			       USB_CNTL_TIMEOUT);
+	int i;
+	int result;
+
+	if (size <= 0)		/* No point in asking for no data */
+		return -EINVAL;
+
+	memset(buf, 0, size);	/* Make sure we parse really received data */
+
+	for (i = 0; i < 3; ++i) {
+		/* retry on length 0 or error; some devices are flakey */
+		result = usb_control_msg(dev, usb_rcvctrlpipe(dev, 0),
+					 USB_REQ_GET_DESCRIPTOR, USB_DIR_IN,
+					 (type << 8) + index, 0, buf, size,
+					 USB_CNTL_TIMEOUT);
+		if (result <= 0 && result != -ETIMEDOUT)
+			continue;
+		if (result > 1 && ((u8 *)buf)[1] != type) {
+			result = -ENODATA;
+			continue;
+		}
+		break;
+	}
+	return result;
 }
 
 /**********************************************************************
@@ -757,7 +766,6 @@ static int usb_get_string(struct usb_device *dev, unsigned short langid,
 	return result;
 }
 
-
 static void usb_try_string_workarounds(unsigned char *buf, int *length)
 {
 	int newlength, oldlength = *length;
@@ -771,7 +779,6 @@ static void usb_try_string_workarounds(unsigned char *buf, int *length)
 		*length = newlength;
 	}
 }
-
 
 static int usb_string_sub(struct usb_device *dev, unsigned int langid,
 		unsigned int index, unsigned char *buf)
@@ -806,7 +813,6 @@ static int usb_string_sub(struct usb_device *dev, unsigned int langid,
 
 	return rc;
 }
-
 
 /********************************************************************
  * usb_string:
@@ -862,7 +868,6 @@ int usb_string(struct usb_device *dev, int index, char *buf, size_t size)
 	err = idx;
 	return err;
 }
-
 
 /********************************************************************
  * USB device handling:
@@ -941,19 +946,14 @@ static int get_descriptor_len(struct usb_device *dev, int len, int expect_len)
 	__maybe_unused struct usb_device_descriptor *desc;
 	ALLOC_CACHE_ALIGN_BUFFER(unsigned char, tmpbuf, USB_BUFSIZ);
 	int err;
-	int retry = 5;
 
 	desc = (struct usb_device_descriptor *)tmpbuf;
 
-again:
 	err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, len);
 	if (err < expect_len) {
 		if (err < 0) {
-			debug("unable to get device descriptor (error=%d) retry: %d\n", err, retry);
-			mdelay(50);
-			if (--retry >= 0)
-				/* Some drives are just slow to wake up. */
-				goto again;
+			printf("unable to get device descriptor (error=%d)\n",
+				err);
 			return err;
 		} else {
 			printf("USB device descriptor short read (expected %i, got %i)\n",
@@ -1016,6 +1016,17 @@ static int usb_setup_descriptor(struct usb_device *dev, bool do_read)
 		err = get_descriptor_len(dev, 64, 8);
 		if (err)
 			return err;
+
+		/*
+		 * Logitech Unifying Receiver 046d:c52b bcdDevice 12.10 seems
+		 * sensitive about the first Get Descriptor request. If there
+		 * are any other requests in the same microframe, the device
+		 * reports bogus data, first of the descriptor parts is not
+		 * sent to the host. Wait over one microframe duration here
+		 * (1mS for USB 1.x , 125uS for USB 2.0) to avoid triggering
+		 * the issue.
+		 */
+		mdelay(1);
 	}
 
 	dev->epmaxpacketin[0] = dev->descriptor.bMaxPacketSize0;
@@ -1090,6 +1101,54 @@ static int usb_prepare_device(struct usb_device *dev, int addr, bool do_read,
 	return 0;
 }
 
+static int usb_device_is_ignored(u16 id_vendor, u16 id_product)
+{
+	ulong vid, pid;
+	char *end;
+	const char *cur = NULL;
+
+	/* ignore list depends on env support */
+	if (!CONFIG_IS_ENABLED(ENV_SUPPORT))
+		return 0;
+
+	cur = env_get("usb_ignorelist");
+
+	/* parse "usb_ignorelist" strictly */
+	while (cur && cur[0] != '\0') {
+		vid = simple_strtoul(cur, &end, 0);
+		/*
+		 * If strtoul did not parse a single digit or the next char is
+		 * not ':' the ignore list is malformed.
+		 */
+		if (cur == end || end[0] != ':')
+			return -EINVAL;
+
+		cur = end + 1;
+		pid = simple_strtoul(cur, &end, 0);
+		/* Consider '*' as wildcard for the product ID */
+		if (cur == end && end[0] == '*') {
+			pid = U16_MAX + 1;
+			end++;
+		}
+		/*
+		 * The ignore list is malformed if no product ID / wildcard was
+		 * parsed or entries are not separated by ',' or terminated with
+		 * '\0'.
+		 */
+		if (cur == end || (end[0] != ',' && end[0] != '\0'))
+			return -EINVAL;
+
+		if (id_vendor == vid && (pid > U16_MAX || id_product == pid))
+			return -ENODEV;
+
+		if (end[0] == '\0')
+			break;
+		cur = end + 1;
+	}
+
+	return 0;
+}
+
 int usb_select_config(struct usb_device *dev)
 {
 	unsigned char *tmpbuf = NULL;
@@ -1104,6 +1163,27 @@ int usb_select_config(struct usb_device *dev)
 	le16_to_cpus(&dev->descriptor.idVendor);
 	le16_to_cpus(&dev->descriptor.idProduct);
 	le16_to_cpus(&dev->descriptor.bcdDevice);
+
+	/* ignore devices from usb_ignorelist */
+	err = usb_device_is_ignored(dev->descriptor.idVendor,
+				    dev->descriptor.idProduct);
+	if (err == -ENODEV) {
+		debug("Ignoring USB device 0x%x:0x%x\n",
+			dev->descriptor.idVendor, dev->descriptor.idProduct);
+		return err;
+	} else if (err == -EINVAL) {
+		/*
+		 * Continue on "usb_ignorelist" parsing errors. The list is
+		 * parsed for each device returning the error would result in
+		 * ignoring all USB devices.
+		 * Since the parsing error is independent of the probed device
+		 * report errors with printf instead of dev_err.
+		 */
+		printf("usb_ignorelist parse error in \"%s\"\n",
+		       env_get("usb_ignorelist"));
+	} else if (err < 0) {
+		return err;
+	}
 
 	/*
 	 * Kingston DT Ultimate 32GB USB 3.0 seems to be extremely sensitive
@@ -1301,6 +1381,5 @@ void usb_find_usb2_hub_address_port(struct usb_device *udev,
 	*hub_port = 0;
 }
 #endif
-
 
 /* EOF */

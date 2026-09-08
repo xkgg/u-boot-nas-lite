@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/asm-arm/unified.h - Unified Assembler Syntax helper macros
  *
  * Copyright (C) 2008 ARM Limited
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #ifndef __ASM_UNIFIED_H
@@ -13,7 +12,7 @@
 	.syntax unified
 #endif
 
-#ifdef CONFIG_CPU_V7M
+#ifdef CONFIG_CPU_V7M_V8M
 #define AR_CLASS(x...)
 #define M_CLASS(x...)	x
 #else

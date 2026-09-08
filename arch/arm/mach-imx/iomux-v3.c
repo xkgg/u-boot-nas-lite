@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Based on the iomux-v3.c from Linux kernel:
  * Copyright (C) 2008 by Sascha Hauer <kernel@pengutronix.de>
@@ -5,10 +6,7 @@
  *                       <armlinux@phytec.de>
  *
  * Copyright (C) 2004-2011 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-#include <common.h>
 #include <asm/io.h>
 #include <asm/arch/imx-regs.h>
 #include <asm/mach-imx/iomux-v3.h>
@@ -144,6 +142,6 @@ void imx_iomux_gpio_set_direction(unsigned int gpio,
 void imx_iomux_gpio_get_function(unsigned int gpio, u32 *gpio_state)
 {
 	*gpio_state = readl(base + (gpio << 2)) &
-		((0X07 << PAD_MUX_MODE_SHIFT) | PAD_CTL_OBE_IBE_ENABLE);
+		((0x07 << PAD_MUX_MODE_SHIFT) | PAD_CTL_OBE_IBE_ENABLE);
 }
 #endif

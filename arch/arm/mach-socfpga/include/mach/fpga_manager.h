@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Copyright (C) 2012-2017 Altera Corporation <www.altera.com>
  * All rights reserved.
- *
- * SPDX-License-Identifier:    BSD-3-Clause
  */
 
 #ifndef	_FPGA_MANAGER_H_
@@ -10,9 +9,9 @@
 
 #include <altera.h>
 
-#if defined(CONFIG_TARGET_SOCFPGA_GEN5)
+#if defined(CONFIG_ARCH_SOCFPGA_GEN5)
 #include <asm/arch/fpga_manager_gen5.h>
-#elif defined(CONFIG_TARGET_SOCFPGA_ARRIA10)
+#elif defined(CONFIG_ARCH_SOCFPGA_ARRIA10)
 #include <asm/arch/fpga_manager_arria10.h>
 #endif
 

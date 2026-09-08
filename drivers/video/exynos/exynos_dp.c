@@ -1,16 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Samsung Electronics
  *
  * Author: Donghwa Lee <dh09.lee@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
-#include <common.h>
 #include <display.h>
 #include <fdtdec.h>
+#include <log.h>
+#include <asm/global_data.h>
+#include <linux/delay.h>
 #include <linux/libfdt.h>
 #include <malloc.h>
 #include <video_bridge.h>
@@ -321,7 +321,7 @@ static unsigned int exynos_dp_link_start(struct exynos_dp *regs,
 
 static unsigned int exynos_dp_training_pattern_dis(struct exynos_dp *regs)
 {
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 
 	exynos_dp_set_training_pattern(regs, DP_NONE);
 
@@ -339,7 +339,7 @@ static unsigned int exynos_dp_enable_rx_to_enhanced_mode(
 		struct exynos_dp *regs, unsigned char enable)
 {
 	unsigned char data;
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 
 	ret = exynos_dp_read_byte_from_dpcd(regs, DPCD_LANE_COUNT_SET,
 					    &data);
@@ -366,7 +366,7 @@ static unsigned int exynos_dp_enable_rx_to_enhanced_mode(
 static unsigned int exynos_dp_set_enhanced_mode(struct exynos_dp *regs,
 						unsigned char enhance_mode)
 {
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 
 	ret = exynos_dp_enable_rx_to_enhanced_mode(regs, enhance_mode);
 	if (ret != EXYNOS_DP_SUCCESS) {
@@ -416,7 +416,7 @@ static int exynos_dp_read_dpcd_lane_stat(struct exynos_dp *regs,
 static unsigned int exynos_dp_read_dpcd_adj_req(struct exynos_dp *regs,
 		unsigned char lane_num, unsigned char *sw, unsigned char *em)
 {
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 	unsigned char buf;
 	unsigned int dpcd_addr;
 	unsigned char shift_val[DP_LANE_CNT_4] = {0, 4, 0, 4};
@@ -484,7 +484,7 @@ static int exynos_dp_reduce_link_rate(struct exynos_dp *regs,
 static unsigned int exynos_dp_process_clock_recovery(struct exynos_dp *regs,
 					struct exynos_dp_priv *priv)
 {
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 	unsigned char lane_stat;
 	unsigned char lt_ctl_val[DP_LANE_CNT_4] = {0, };
 	unsigned int i;
@@ -594,7 +594,7 @@ static unsigned int exynos_dp_process_clock_recovery(struct exynos_dp *regs,
 static unsigned int exynos_dp_process_equalizer_training(
 		struct exynos_dp *regs, struct exynos_dp_priv *priv)
 {
-	unsigned int ret = EXYNOS_DP_SUCCESS;
+	unsigned int ret;
 	unsigned char lane_stat, adj_req_sw, adj_req_em, i;
 	unsigned char lt_ctl_val[DP_LANE_CNT_4] = {0,};
 	unsigned char interlane_aligned = 0;
@@ -876,14 +876,14 @@ static unsigned int exynos_dp_config_video(struct exynos_dp *regs,
 	return ret;
 }
 
-static int exynos_dp_ofdata_to_platdata(struct udevice *dev)
+static int exynos_dp_of_to_plat(struct udevice *dev)
 {
 	struct exynos_dp_priv *priv = dev_get_priv(dev);
 	const void *blob = gd->fdt_blob;
 	unsigned int node = dev_of_offset(dev);
 	fdt_addr_t addr;
 
-	addr = devfdt_get_addr(dev);
+	addr = dev_read_addr(dev);
 	if (addr == FDT_ADDR_T_NONE) {
 		debug("Can't get the DP base address\n");
 		return -EINVAL;
@@ -1064,7 +1064,6 @@ int exynos_dp_enable(struct udevice *dev, int panel_bpp,
 	return ret;
 }
 
-
 static const struct dm_display_ops exynos_dp_ops = {
 	.enable = exynos_dp_enable,
 };
@@ -1075,10 +1074,10 @@ static const struct udevice_id exynos_dp_ids[] = {
 };
 
 U_BOOT_DRIVER(exynos_dp) = {
-	.name	= "eexynos_dp",
+	.name	= "exynos_dp",
 	.id	= UCLASS_DISPLAY,
 	.of_match = exynos_dp_ids,
 	.ops	= &exynos_dp_ops,
-	.ofdata_to_platdata	= exynos_dp_ofdata_to_platdata,
-	.priv_auto_alloc_size	= sizeof(struct exynos_dp_priv),
+	.of_to_plat	= exynos_dp_of_to_plat,
+	.priv_auto	= sizeof(struct exynos_dp_priv),
 };

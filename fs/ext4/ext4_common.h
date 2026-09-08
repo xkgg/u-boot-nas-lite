@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2011 - 2012 Samsung Electronics
  * EXT4 filesystem implementation in Uboot by
@@ -15,8 +16,6 @@
  * Copyright (C) 2003, 2004  Free Software Foundation, Inc.
  *
  * ext4write : Based on generic ext4 protocol.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __EXT4_COMMON__
@@ -24,10 +23,12 @@
 #include <ext_common.h>
 #include <ext4fs.h>
 #include <malloc.h>
+#include <asm/cache.h>
+#include <linux/compat.h>
 #include <linux/errno.h>
 #if defined(CONFIG_EXT4_WRITE)
 #include "ext4_journal.h"
-#include "crc16.h"
+#include <linux/crc16.h>
 #endif
 
 #define YES		1
@@ -43,9 +44,7 @@
 
 static inline void *zalloc(size_t size)
 {
-	void *p = memalign(ARCH_DMA_MINALIGN, size);
-	memset(p, 0, size);
-	return p;
+	return kzalloc(size, 0);
 }
 
 int ext4fs_read_inode(struct ext2_data *data, int ino,
@@ -54,6 +53,8 @@ int ext4fs_read_file(struct ext2fs_node *node, loff_t pos, loff_t len,
 		     char *buf, loff_t *actread);
 int ext4fs_find_file(const char *path, struct ext2fs_node *rootnode,
 			struct ext2fs_node **foundnode, int expecttype);
+int ext4fs_find_file1(const char *currpath, struct ext2fs_node *currroot,
+		      struct ext2fs_node **currfound, int *foundtype);
 int ext4fs_iterate_dir(struct ext2fs_node *dir, char *name,
 			struct ext2fs_node **fnode, int *ftype);
 
@@ -73,7 +74,7 @@ int ext4fs_iget(int inode_no, struct ext2_inode *inode);
 void ext4fs_allocate_blocks(struct ext2_inode *file_inode,
 				unsigned int total_remaining_blocks,
 				unsigned int *total_no_of_block);
-void put_ext4(uint64_t off, void *buf, uint32_t size);
+void put_ext4(uint64_t off, const void *buf, uint32_t size);
 struct ext2_block_group *ext4fs_get_group_descriptor
 	(const struct ext_filesystem *fs, uint32_t bg_idx);
 uint64_t ext4fs_bg_get_block_id(const struct ext2_block_group *bg,

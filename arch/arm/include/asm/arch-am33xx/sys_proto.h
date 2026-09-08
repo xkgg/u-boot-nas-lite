@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * sys_proto.h
  *
  * System information header
  *
- * Copyright (C) 2011, Texas Instruments, Incorporated - http://www.ti.com/
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2011, Texas Instruments, Incorporated - https://www.ti.com/
  */
 
 #ifndef _SYS_PROTO_H_
@@ -38,8 +37,8 @@ u32 wait_on_value(u32, u32, void *, u32);
 #ifdef CONFIG_NOR_BOOT
 void enable_norboot_pin_mux(void);
 #endif
-void am33xx_spl_board_init(void);
 int am335x_get_efuse_mpu_max_freq(struct ctrl_dev *cdev);
+int am335x_get_mpu_vdd(int sil_rev, int frequency);
 int am335x_get_tps65910_mpu_vdd(int sil_rev, int frequency);
 #endif
 

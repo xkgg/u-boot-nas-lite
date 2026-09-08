@@ -1,10 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * IO header file
  *
  * Copyright (C) 2001-2007 Tensilica Inc.
  * Based on the Linux/Xtensa version of this header.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _XTENSA_IO_H
@@ -12,6 +11,8 @@
 
 #include <linux/types.h>
 #include <asm/byteorder.h>
+
+#include <asm/addrspace.h>
 
 /*
  * swap functions to change byte order from little-endian to big-endian and
@@ -77,6 +78,12 @@ void insl(unsigned long port, void *dst, unsigned long count);
 void outsb(unsigned long port, const void *src, unsigned long count);
 void outsw(unsigned long port, const void *src, unsigned long count);
 void outsl(unsigned long port, const void *src, unsigned long count);
+#define insb insb
+#define insw insw
+#define insl insl
+#define outsb outsb
+#define outsw outsw
+#define outsl outsl
 
 #define IO_SPACE_LIMIT ~0
 
@@ -104,7 +111,6 @@ void outsl(unsigned long port, const void *src, unsigned long count);
 # error processor byte order undefined!
 #endif
 
-
 /*
  * Convert a physical pointer to a virtual kernel pointer for /dev/mem access
  */
@@ -115,34 +121,43 @@ void outsl(unsigned long port, const void *src, unsigned long count);
  */
 #define xlate_dev_kmem_ptr(p)   p
 
-#define MAP_NOCACHE	(0)
-#define MAP_WRCOMBINE	(0)
-#define MAP_WRBACK	(0)
-#define MAP_WRTHROUGH	(0)
-
-static inline void *
-map_physmem(phys_addr_t paddr, unsigned long len, unsigned long flags)
-{
-	return (void *)paddr;
-}
-
-/*
- * Take down a mapping set up by map_physmem().
- */
-static inline void unmap_physmem(void *vaddr, unsigned long flags)
-{
-}
-
-static inline phys_addr_t virt_to_phys(void *vaddr)
-{
-	return (phys_addr_t)((unsigned long)vaddr);
-}
-
 /*
  * Dummy function to keep U-Boot's cfi_flash.c driver happy.
  */
 static inline void sync(void)
 {
 }
+
+#if XCHAL_HAVE_PTP_MMU
+static inline void *phys_to_virt(phys_addr_t paddr)
+{
+	if (paddr >= CFG_SYS_IO_BASE)
+		return (void *)(unsigned long)paddr;
+
+	if (paddr < CFG_MAX_MEM_MAPPED)
+		return (void *)(unsigned long)MEMADDR(paddr);
+
+	return NULL;
+}
+
+#define phys_to_virt phys_to_virt
+
+static inline phys_addr_t virt_to_phys(void *vaddr)
+{
+	unsigned long addr = (unsigned long)vaddr;
+
+	if (addr >= CFG_SYS_IO_BASE)
+		return addr;
+
+	if (addr >= CFG_SYS_SDRAM_BASE && addr < MEMADDR(CFG_MAX_MEM_MAPPED))
+		return PHYSADDR(addr);
+
+	return 0;
+}
+
+#define virt_to_phys virt_to_phys
+#endif /* XCHAL_HAVE_PTP_MMU */
+
+#include <asm-generic/io.h>
 
 #endif	/* _XTENSA_IO_H */

@@ -1,12 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Board init file for STiH410-B2260
- *
- * (C) Copyright 2017 Patrice Chotard <patrice.chotard@st.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2017, STMicroelectronics - All Rights Reserved
+ * Author(s): Patrice Chotard, <patrice.chotard@foss.st.com> for STMicroelectronics.
  */
 
-#include <common.h>
+#include <cpu_func.h>
+#include <init.h>
+#include <asm/cache.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -24,7 +24,7 @@ int dram_init_banksize(void)
 	return 0;
 }
 
-#ifndef CONFIG_SYS_DCACHE_OFF
+#if !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)
 void enable_caches(void)
 {
 	/* Enable D-cache. I-cache is already enabled in start.S */
@@ -32,7 +32,9 @@ void enable_caches(void)
 }
 #endif
 
-int board_init(void)
+#ifdef CONFIG_USB_DWC3
+int g_dnl_board_usb_cable_connected(void)
 {
-	return 0;
+	return 1;
 }
+#endif

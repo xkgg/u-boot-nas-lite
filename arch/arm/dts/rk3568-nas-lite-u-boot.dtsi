@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+
+#include "rk3568-u-boot.dtsi"
+
+/* Board-specific aliases and SPL boot order retained from the NAS Lite tree. */
+/ {
+	aliases {
+		ethernet0 = &gmac0;
+		ethernet1 = &gmac1;
+		mmc0 = &sdhci;
+		mmc1 = &sdmmc0;
+		mmc2 = &sdmmc1;
+	};
+
+	chosen {
+		stdout-path = &uart2;
+		u-boot,spl-boot-order = "same-as-spl", &sdmmc0, &sdhci,
+			&nandc0, &sdmmc1, &spi_nand, &spi_nor;
+	};
+};
+
+&nandc0 {
+	bootph-pre-ram;
+};
+
+&nand0 {
+	bootph-pre-ram;
+};
+
+/* Preserve the early-device coverage of the legacy vendor dtsi using the
+ * boot-phase property names expected by U-Boot 2026.07. */
+&gmac0 {
+	bootph-pre-ram;
+};
+
+&gmac1 {
+	bootph-pre-ram;
+};
+
+&gmac0_stmmac_axi_setup {
+	bootph-pre-ram;
+};
+
+&gmac0_mtl_rx_setup {
+	bootph-pre-ram;
+};
+
+&gmac0_mtl_tx_setup {
+	bootph-pre-ram;
+};
+
+&gmac1_stmmac_axi_setup {
+	bootph-pre-ram;
+};
+
+&gmac1_mtl_rx_setup {
+	bootph-pre-ram;
+};
+
+&gmac1_mtl_tx_setup {
+	bootph-pre-ram;
+};
+
+&mdio0 {
+	bootph-pre-ram;
+};
+
+&mdio1 {
+	bootph-pre-ram;
+};
+
+&rgmii_phy0 {
+	bootph-pre-ram;
+};
+
+&rgmii_phy1 {
+	bootph-pre-ram;
+};
+
+&pcie30phy {
+	bootph-pre-ram;
+};
+
+&pcie3x2 {
+	bootph-pre-ram;
+	status = "okay";
+};
+
+&saradc {
+	bootph-pre-ram;
+};
+
+&sfc {
+	bootph-some-ram;
+};
+
+&spi_nand {
+	bootph-pre-ram;
+};
+
+&spi_nor {
+	bootph-pre-ram;
+};
+
+&usb_host0_xhci {
+	bootph-pre-ram;
+};
+
+&usb2phy0 {
+	bootph-pre-ram;
+};
+
+&usb2phy0_host {
+	bootph-pre-ram;
+};

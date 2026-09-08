@@ -1,15 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Qualcomm EHCI driver
  *
  * (C) Copyright 2015 Mateusz Kulikowski <mateusz.kulikowski@gmail.com>
  *
  * Based on Linux driver
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <clk.h>
 #include <dm.h>
+#include <dm/device_compat.h>
+#include <dm/lists.h>
 #include <errno.h>
 #include <usb.h>
 #include <usb/ehci-ci.h>
@@ -20,64 +21,22 @@
 #include <linux/compat.h>
 #include "ehci.h"
 
-/* PHY viewport regs */
-#define ULPI_MISC_A_READ         0x96
-#define ULPI_MISC_A_SET          0x97
-#define ULPI_MISC_A_CLEAR        0x98
-#define ULPI_MISC_A_VBUSVLDEXTSEL    (1 << 1)
-#define ULPI_MISC_A_VBUSVLDEXT       (1 << 0)
-
-#define GEN2_SESS_VLD_CTRL_EN (1 << 7)
-
-#define SESS_VLD_CTRL         (1 << 25)
-
 struct msm_ehci_priv {
 	struct ehci_ctrl ctrl; /* Needed by EHCI */
 	struct usb_ehci *ehci; /* Start of IP core*/
-	struct ulpi_viewport ulpi_vp; /* ULPI Viewport */
+	struct phy phy;
 };
 
-int __weak board_prepare_usb(enum usb_init_type type)
-{
-	return 0;
-}
-
-static void setup_usb_phy(struct msm_ehci_priv *priv)
-{
-	/* Select and enable external configuration with USB PHY */
-	ulpi_write(&priv->ulpi_vp, (u8 *)ULPI_MISC_A_SET,
-		   ULPI_MISC_A_VBUSVLDEXTSEL | ULPI_MISC_A_VBUSVLDEXT);
-}
-
-static void reset_usb_phy(struct msm_ehci_priv *priv)
-{
-	/* Disable VBUS mimicing in the controller. */
-	ulpi_write(&priv->ulpi_vp, (u8 *)ULPI_MISC_A_CLEAR,
-		   ULPI_MISC_A_VBUSVLDEXTSEL | ULPI_MISC_A_VBUSVLDEXT);
-}
-
+struct qcom_ci_hdrc_priv {
+	struct clk_bulk clks;
+};
 
 static int msm_init_after_reset(struct ehci_ctrl *dev)
 {
 	struct msm_ehci_priv *p = container_of(dev, struct msm_ehci_priv, ctrl);
 	struct usb_ehci *ehci = p->ehci;
 
-	/* select ULPI phy */
-	writel(PORT_PTS_ULPI, &ehci->portsc);
-	setup_usb_phy(p);
-
-	/* Enable sess_vld */
-	setbits_le32(&ehci->genconfig2, GEN2_SESS_VLD_CTRL_EN);
-
-	/* Enable external vbus configuration in the LINK */
-	setbits_le32(&ehci->usbcmd, SESS_VLD_CTRL);
-
-	/* USB_OTG_HS_AHB_BURST */
-	writel(0x0, &ehci->sbuscfg);
-
-	/* USB_OTG_HS_AHB_MODE: HPROT_MODE */
-	/* Bus access related config. */
-	writel(0x08, &ehci->sbusmode);
+	generic_phy_reset(&p->phy);
 
 	/* set mode to host controller */
 	writel(CM_HOST, &ehci->usbmode);
@@ -93,6 +52,7 @@ static int ehci_usb_probe(struct udevice *dev)
 {
 	struct msm_ehci_priv *p = dev_get_priv(dev);
 	struct usb_ehci *ehci = p->ehci;
+	struct usb_plat *plat = dev_get_plat(dev);
 	struct ehci_hccr *hccr;
 	struct ehci_hcor *hcor;
 	int ret;
@@ -101,76 +61,130 @@ static int ehci_usb_probe(struct udevice *dev)
 	hcor = (struct ehci_hcor *)((phys_addr_t)hccr +
 			HC_LENGTH(ehci_readl(&(hccr)->cr_capbase)));
 
-	ret = board_prepare_usb(USB_INIT_HOST);
+	ret = generic_setup_phy(dev, &p->phy, 0, PHY_MODE_USB_HOST, 0);
+	if (ret)
+		return ret;
+
+	ret = board_usb_init(0, plat->init_type);
 	if (ret < 0)
 		return ret;
 
-	return ehci_register(dev, hccr, hcor, &msm_ehci_ops, 0, USB_INIT_HOST);
+	return ehci_register(dev, hccr, hcor, &msm_ehci_ops, 0,
+			     plat->init_type);
 }
 
 static int ehci_usb_remove(struct udevice *dev)
 {
 	struct msm_ehci_priv *p = dev_get_priv(dev);
-	struct usb_ehci *ehci = p->ehci;
 	int ret;
 
 	ret = ehci_deregister(dev);
 	if (ret)
 		return ret;
 
-	/* Stop controller. */
-	clrbits_le32(&ehci->usbcmd, CMD_RUN);
+	ret = generic_shutdown_phy(&p->phy);
+	if (ret)
+		return ret;
 
-	reset_usb_phy(p);
-
-	ret = board_prepare_usb(USB_INIT_DEVICE); /* Board specific hook */
+	ret = board_usb_init(0, USB_INIT_DEVICE); /* Board specific hook */
 	if (ret < 0)
 		return ret;
 
-	/* Reset controller */
-	setbits_le32(&ehci->usbcmd, CMD_RESET);
-
-	/* Wait for reset */
-	if (wait_for_bit_le32(&ehci->usbcmd, CMD_RESET, false, 30, false)) {
-		printf("Stuck on USB reset.\n");
-		return -ETIMEDOUT;
-	}
-
 	return 0;
 }
 
-static int ehci_usb_ofdata_to_platdata(struct udevice *dev)
+static int ehci_usb_of_to_plat(struct udevice *dev)
 {
 	struct msm_ehci_priv *priv = dev_get_priv(dev);
 
-	priv->ulpi_vp.port_num = 0;
 	priv->ehci = dev_read_addr_ptr(dev);
 
-	if (priv->ehci == (void *)FDT_ADDR_T_NONE)
+	if (!priv->ehci)
 		return -EINVAL;
-
-	/* Warning: this will not work if viewport address is > 64 bit due to
-	 * ULPI design.
-	 */
-	priv->ulpi_vp.viewport_addr = (phys_addr_t)&priv->ehci->ulpi_viewpoint;
 
 	return 0;
 }
 
-static const struct udevice_id ehci_usb_ids[] = {
-	{ .compatible = "qcom,ehci-host", },
-	{ }
-};
+#if defined(CONFIG_CI_UDC)
+/* Little quirk that MSM needs with Chipidea controller
+ * Must reinit phy after reset
+ */
+void ci_init_after_reset(struct ehci_ctrl *ctrl)
+{
+	struct msm_ehci_priv *p = ctrl->priv;
 
-U_BOOT_DRIVER(usb_ehci) = {
+	generic_phy_reset(&p->phy);
+}
+#endif
+
+U_BOOT_DRIVER(ehci_msm) = {
 	.name	= "ehci_msm",
 	.id	= UCLASS_USB,
-	.of_match = ehci_usb_ids,
-	.ofdata_to_platdata = ehci_usb_ofdata_to_platdata,
+	.of_to_plat = ehci_usb_of_to_plat,
 	.probe = ehci_usb_probe,
 	.remove = ehci_usb_remove,
 	.ops	= &ehci_usb_ops,
-	.priv_auto_alloc_size = sizeof(struct msm_ehci_priv),
-	.platdata_auto_alloc_size = sizeof(struct usb_platdata),
+	.priv_auto	= sizeof(struct msm_ehci_priv),
+	.plat_auto	= sizeof(struct usb_plat),
 	.flags	= DM_FLAG_ALLOC_PRIV_DMA,
+};
+
+static int qcom_ci_hdrc_probe(struct udevice *dev)
+{
+	struct qcom_ci_hdrc_priv *p = dev_get_priv(dev);
+	int ret;
+
+	ret = clk_get_bulk(dev, &p->clks);
+	if (ret && (ret != -ENOSYS && ret != -ENOENT)) {
+		dev_err(dev, "Failed to get clocks: %d\n", ret);
+		return ret;
+	}
+
+	return clk_enable_bulk(&p->clks);
+}
+
+static int qcom_ci_hdrc_remove(struct udevice *dev)
+{
+	struct qcom_ci_hdrc_priv *p = dev_get_priv(dev);
+
+	return clk_release_bulk(&p->clks);
+}
+
+static int qcom_ci_hdrc_bind(struct udevice *dev)
+{
+	ofnode ulpi_node = ofnode_first_subnode(dev_ofnode(dev));
+	ofnode phy_node;
+	int ret;
+
+	ret = device_bind_driver_to_node(dev, "ehci_msm", "ehci_msm",
+					 dev_ofnode(dev), NULL);
+	if (ret)
+		return ret;
+
+	if (!ofnode_valid(ulpi_node))
+		return 0;
+
+	phy_node = ofnode_first_subnode(ulpi_node);
+	if (!ofnode_valid(phy_node)) {
+		printf("%s: ulpi subnode with no phy\n", __func__);
+		return -ENOENT;
+	}
+
+	return device_bind_driver_to_node(dev, "msm8916_usbphy", "msm8916_usbphy",
+					  phy_node, NULL);
+}
+
+static const struct udevice_id qcom_ci_hdrc_ids[] = {
+	{ .compatible = "qcom,ci-hdrc", },
+	{ }
+};
+
+U_BOOT_DRIVER(qcom_ci_hdrc) = {
+	.name		= "qcom_ci_hdrc",
+	.id		= UCLASS_NOP,
+	.of_match	= qcom_ci_hdrc_ids,
+	.bind		= qcom_ci_hdrc_bind,
+	.probe		= qcom_ci_hdrc_probe,
+	.remove		= qcom_ci_hdrc_remove,
+	.priv_auto	= sizeof(struct qcom_ci_hdrc_priv),
 };

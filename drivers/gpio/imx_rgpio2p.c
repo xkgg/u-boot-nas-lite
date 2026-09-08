@@ -1,20 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2016 Freescale Semiconductor, Inc.
  *
  * RGPIO2P driver for the Freescale i.MX7ULP.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
 #include <errno.h>
 #include <fdtdec.h>
 #include <asm/gpio.h>
 #include <asm/io.h>
+#include <dm/device-internal.h>
 #include <malloc.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 enum imx_rgpio2p_direction {
 	IMX_RGPIO2P_DIRECTION_IN,
@@ -22,6 +19,12 @@ enum imx_rgpio2p_direction {
 };
 
 #define GPIO_PER_BANK			32
+
+struct imx_rgpio2p_soc_data {
+	bool have_dual_base;
+};
+
+#define IMX8ULP_GPIO_BASE_OFF	0x40
 
 struct imx_rgpio2p_data {
 	struct gpio_regs *regs;
@@ -39,6 +42,14 @@ static int imx_rgpio2p_is_output(struct gpio_regs *regs, int offset)
 	val = readl(&regs->gpio_pddr);
 
 	return val & (1 << offset) ? 1 : 0;
+}
+
+static int imx_rgpio2p_bank_get_direction(struct gpio_regs *regs, int offset)
+{
+	if ((readl(&regs->gpio_pddr) >> offset) & 0x01)
+		return IMX_RGPIO2P_DIRECTION_OUT;
+
+	return IMX_RGPIO2P_DIRECTION_IN;
 }
 
 static void imx_rgpio2p_bank_direction(struct gpio_regs *regs, int offset,
@@ -69,7 +80,11 @@ static void imx_rgpio2p_bank_set_value(struct gpio_regs *regs, int offset,
 
 static int imx_rgpio2p_bank_get_value(struct gpio_regs *regs, int offset)
 {
-	return (readl(&regs->gpio_pdir) >> offset) & 0x01;
+	if (imx_rgpio2p_bank_get_direction(regs, offset) ==
+	    IMX_RGPIO2P_DIRECTION_IN)
+		return (readl(&regs->gpio_pdir) >> offset) & 0x01;
+
+	return (readl(&regs->gpio_pdor) >> offset) & 0x01;
 }
 
 static int  imx_rgpio2p_direction_input(struct udevice *dev, unsigned offset)
@@ -135,7 +150,7 @@ static const struct dm_gpio_ops imx_rgpio2p_ops = {
 static int imx_rgpio2p_probe(struct udevice *dev)
 {
 	struct imx_rgpio2p_data *bank = dev_get_priv(dev);
-	struct imx_rgpio2p_plat *plat = dev_get_platdata(dev);
+	struct imx_rgpio2p_plat *plat = dev_get_plat(dev);
 	struct gpio_dev_priv *uc_priv = dev_get_uclass_priv(dev);
 	int banknum;
 	char name[18], *str;
@@ -154,42 +169,75 @@ static int imx_rgpio2p_probe(struct udevice *dev)
 
 static int imx_rgpio2p_bind(struct udevice *dev)
 {
-	struct imx_rgpio2p_plat *plat = dev->platdata;
+	struct imx_rgpio2p_plat *plat = dev_get_plat(dev);
+	struct imx_rgpio2p_soc_data *data =
+		(struct imx_rgpio2p_soc_data *)dev_get_driver_data(dev);
+	bool dual_base = data->have_dual_base;
 	fdt_addr_t addr;
 
 	/*
-	 * If platdata already exsits, directly return.
-	 * Actually only when DT is not supported, platdata
-	 * is statically initialized in U_BOOT_DEVICES.Here
+	 * If plat already exsits, directly return.
+	 * Actually only when DT is not supported, plat
+	 * is statically initialized in U_BOOT_DRVINFOS.Here
 	 * will return.
 	 */
 	if (plat)
 		return 0;
 
-	addr = devfdt_get_addr_index(dev, 1);
-	if (addr == FDT_ADDR_T_NONE)
-		return -EINVAL;
+	/*
+	 * Handle legacy compatible combinations which used two reg values
+	 * for the i.MX8ULP and i.MX93.
+	 */
+	if (device_is_compatible(dev, "fsl,imx7ulp-gpio") &&
+	    (device_is_compatible(dev, "fsl,imx93-gpio") ||
+	    (device_is_compatible(dev, "fsl,imx8ulp-gpio"))))
+		dual_base = true;
+
+	if (dual_base) {
+		addr = devfdt_get_addr_index(dev, 1);
+		if (addr == FDT_ADDR_T_NONE)
+			return -EINVAL;
+	} else {
+		addr = devfdt_get_addr_index(dev, 0);
+		if (addr == FDT_ADDR_T_NONE)
+			return -EINVAL;
+
+		addr += IMX8ULP_GPIO_BASE_OFF;
+	}
 
 	/*
 	 * TODO:
 	 * When every board is converted to driver model and DT is supported,
 	 * this can be done by auto-alloc feature, but not using calloc
-	 * to alloc memory for platdata.
+	 * to alloc memory for plat.
+	 *
+	 * For example imx_rgpio2p_plat uses platform data rather than device
+	 * tree.
+	 *
+	 * NOTE: DO NOT COPY this code if you are using device tree.
 	 */
 	plat = calloc(1, sizeof(*plat));
 	if (!plat)
 		return -ENOMEM;
 
 	plat->regs = (struct gpio_regs *)addr;
-	plat->bank_index = dev->req_seq;
-	dev->platdata = plat;
+	plat->bank_index = dev_seq(dev);
+	dev_set_plat(dev, plat);
 
 	return 0;
 }
 
+static struct imx_rgpio2p_soc_data imx7ulp_data = {
+	.have_dual_base = true,
+};
+
+static struct imx_rgpio2p_soc_data imx8ulp_data __section(".data") = {
+	.have_dual_base = false,
+};
 
 static const struct udevice_id imx_rgpio2p_ids[] = {
-	{ .compatible = "fsl,imx7ulp-gpio" },
+	{ .compatible = "fsl,imx7ulp-gpio", .data = (ulong)&imx7ulp_data },
+	{ .compatible = "fsl,imx8ulp-gpio", .data = (ulong)&imx8ulp_data },
 	{ }
 };
 
@@ -198,7 +246,7 @@ U_BOOT_DRIVER(imx_rgpio2p) = {
 	.id	= UCLASS_GPIO,
 	.ops	= &imx_rgpio2p_ops,
 	.probe	= imx_rgpio2p_probe,
-	.priv_auto_alloc_size = sizeof(struct imx_rgpio2p_plat),
+	.priv_auto	= sizeof(struct imx_rgpio2p_plat),
 	.of_match = imx_rgpio2p_ids,
 	.bind	= imx_rgpio2p_bind,
 };
@@ -213,7 +261,7 @@ static const struct imx_rgpio2p_plat imx_plat[] = {
 	{ 5, (struct gpio_regs *)RGPIO2P_GPIO6_BASE_ADDR },
 };
 
-U_BOOT_DEVICES(imx_rgpio2ps) = {
+U_BOOT_DRVINFOS(imx_rgpio2ps) = {
 	{ "imx_rgpio2p", &imx_plat[0] },
 	{ "imx_rgpio2p", &imx_plat[1] },
 	{ "imx_rgpio2p", &imx_plat[2] },

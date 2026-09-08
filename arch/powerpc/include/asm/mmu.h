@@ -7,6 +7,7 @@
 
 #ifndef __ASSEMBLY__
 /* Hardware Page Table Entry */
+#include <linux/bitops.h>
 typedef struct _PTE {
 #ifdef CONFIG_PPC64BRIDGE
 	unsigned long long vsid:52;
@@ -125,7 +126,6 @@ typedef struct _pte {
 #define PT_MASK  0x02FF
 #define PG_SHIFT (12)			/* Page Entry */
 
-
 /* MMU context */
 
 typedef struct _MMU_context {
@@ -135,10 +135,6 @@ typedef struct _MMU_context {
 
 extern void _tlbie(unsigned long va);	/* invalidate a TLB entry */
 extern void _tlbia(void);		/* invalidate all TLB entries */
-
-#ifdef CONFIG_ADDR_MAP
-extern void init_addr_map(void);
-#endif
 
 typedef enum {
 	IBAT0 = 0, IBAT1, IBAT2, IBAT3,
@@ -307,7 +303,6 @@ extern void print_bats(void);
 #define M_CASID		793	/* Address space ID (context) to match */
 #define MC_ASIDMASK	0x0000000f	/* Bits used for ASID value */
 
-
 /* These are the Ks and Kp from the PowerPC books.  For proper operation,
  * Ks = 0, Kp = 1.
  */
@@ -351,7 +346,6 @@ extern void print_bats(void);
 #define MD_WT		0x00000002	/* Use writethrough page attribute */
 #define MD_SVALID	0x00000001	/* Segment entry is valid */
 					/* Reset value is undefined */
-
 
 /* Real page number.  Defined by the pte.  Writing this register
  * causes a TLB entry to be created for the data TLB, using
@@ -450,7 +444,7 @@ extern void print_bats(void);
 		(((ts) << 12) & MAS1_TS)                |\
 		(MAS1_TSIZE(tsize)))
 #define FSL_BOOKE_MAS2(epn, wimge) \
-		(((epn) & MAS3_RPN) | (wimge))
+		(((epn) & MAS2_EPN) | (wimge))
 #define FSL_BOOKE_MAS3(rpn, user, perms) \
 		(((rpn) & MAS3_RPN) | (user) | (perms))
 #define FSL_BOOKE_MAS7(rpn) \

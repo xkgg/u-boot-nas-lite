@@ -1,14 +1,20 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2002-2010
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef	__ASM_GBL_DATA_H
 #define __ASM_GBL_DATA_H
 
+#include <linux/types.h>
 #include <asm/regdef.h>
+#include <asm/u-boot.h>
+
+struct octeon_eeprom_mac_addr {
+	u8 mac_addr_base[6];
+	u8 count;
+};
 
 /* Architecture-specific global data */
 struct arch_global_data {
@@ -28,10 +34,16 @@ struct arch_global_data {
 #ifdef CONFIG_MIPS_L2_CACHE
 	unsigned short l2_line_size;
 #endif
+#ifdef CONFIG_ARCH_MTMIPS
+	unsigned long timer_freq;
+#endif
+#ifdef CONFIG_ARCH_OCTEON
+	struct octeon_eeprom_mac_addr mac_desc;
+#endif
 };
 
 #include <asm-generic/global_data.h>
 
-#define DECLARE_GLOBAL_DATA_PTR     register volatile gd_t *gd asm ("k0")
+#define DECLARE_GLOBAL_DATA_PTR     register gd_t *gd asm ("k0")
 
 #endif /* __ASM_GBL_DATA_H */

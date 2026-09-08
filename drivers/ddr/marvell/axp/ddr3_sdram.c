@@ -1,10 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) Marvell International Ltd. and its affiliates
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
-#include <common.h>
 #include <i2c.h>
 #include <spl.h>
 #include <asm/io.h>
@@ -22,7 +20,7 @@ extern u32 pbs_pattern_32b[2][LEN_PBS_PATTERN];
 #if defined(MV88F78X60)
 extern u32 pbs_pattern_64b[2][LEN_PBS_PATTERN];
 #endif
-extern u32 pbs_dq_mapping[PUP_NUM_64BIT][DQ_NUM];
+extern u32 pbs_dq_mapping[PUP_NUM_64BIT + 1][DQ_NUM];
 
 #if defined(MV88F78X60) || defined(MV88F672X)
 /* PBS locked dq (per pup) */

@@ -1,30 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  (C) Copyright 2010,2011
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <config.h>
 #include <dm.h>
+#include <dm/root.h>
+#include <env.h>
 #include <errno.h>
+#include <init.h>
+#include <log.h>
 #include <ns16550.h>
+#include <power/regulator.h>
 #include <usb.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/arch-tegra/ap.h>
 #include <asm/arch-tegra/board.h>
+#include <asm/arch-tegra/cboot.h>
 #include <asm/arch-tegra/clk_rst.h>
 #include <asm/arch-tegra/pmc.h>
+#include <asm/arch-tegra/pmu.h>
 #include <asm/arch-tegra/sys_proto.h>
 #include <asm/arch-tegra/uart.h>
 #include <asm/arch-tegra/warmboot.h>
 #include <asm/arch-tegra/gpu.h>
 #include <asm/arch-tegra/usb.h>
 #include <asm/arch-tegra/xusb-padctl.h>
+#ifndef CONFIG_TEGRA186
+#include <asm/arch-tegra/fuse.h>
+#include <asm/arch/gp_padctrl.h>
+#endif
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
 #include <asm/arch/clock.h>
+#endif
+#if CONFIG_IS_ENABLED(PINCTRL_TEGRA)
 #include <asm/arch/funcmux.h>
 #include <asm/arch/pinmux.h>
-#include <asm/arch/pmu.h>
+#endif
 #include <asm/arch/tegra.h>
 #ifdef CONFIG_TEGRA_CLOCK_SCALING
 #include <asm/arch/emc.h>
@@ -33,9 +47,9 @@
 
 DECLARE_GLOBAL_DATA_PTR;
 
-#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_XPL_BUILD
 /* TODO(sjg@chromium.org): Remove once SPL supports device tree */
-U_BOOT_DEVICE(tegra_gpios) = {
+U_BOOT_DRVINFO(tegra_gpios) = {
 	"gpio_tegra"
 };
 #endif
@@ -47,6 +61,8 @@ __weak void pin_mux_mmc(void) {}
 __weak void gpio_early_init_uart(void) {}
 __weak void pin_mux_display(void) {}
 __weak void start_cpu_fan(void) {}
+__weak void cboot_late_init(void) {}
+__weak void nvidia_board_late_init(void) {}
 
 #if defined(CONFIG_TEGRA_NAND)
 __weak void pin_mux_nand(void)
@@ -109,8 +125,10 @@ int board_init(void)
 	__maybe_unused int board_id;
 
 	/* Do clocks and UART first so that printf() works */
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
 	clock_init();
 	clock_verify();
+#endif
 
 	tegra_gpu_config();
 
@@ -123,7 +141,7 @@ int board_init(void)
 #endif
 
 	/* Init is handled automatically in the driver-model case */
-#if defined(CONFIG_DM_VIDEO)
+#if defined(CONFIG_VIDEO)
 	pin_mux_display();
 #endif
 	/* boot param addr */
@@ -147,7 +165,7 @@ int board_init(void)
 	pin_mux_usb();
 #endif
 
-#if defined(CONFIG_DM_VIDEO)
+#if defined(CONFIG_VIDEO)
 	board_id = tegra_board_id();
 	err = tegra_lcd_pmic_init(board_id);
 	if (err) {
@@ -169,7 +187,14 @@ int board_init(void)
 	/* prepare the WB code to LP0 location */
 	warmboot_prepare_code(TEGRA_LP0_ADDR, TEGRA_LP0_SIZE);
 #endif
+
 	return nvidia_board_init();
+}
+
+void board_cleanup_before_linux(void)
+{
+	/* power down UPHY PLL */
+	tegra_xusb_padctl_exit();
 }
 
 #ifdef CONFIG_BOARD_EARLY_INIT_F
@@ -181,8 +206,10 @@ void gpio_early_init(void) __attribute__((weak, alias("__gpio_early_init")));
 
 int board_early_init_f(void)
 {
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
 	if (!clock_early_init_done())
 		clock_early_init();
+#endif
 
 #if defined(CONFIG_TEGRA_DISCONNECT_UDC_ON_BOOT)
 #define USBCMD_FS2 (1 << 15)
@@ -193,10 +220,12 @@ int board_early_init_f(void)
 #endif
 
 	/* Do any special system timer/TSC setup */
-#if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
+#  if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
 	if (!tegra_cpu_is_non_secure())
-#endif
+#  endif
 		arch_timer_init();
+#endif
 
 	pinmux_init();
 	board_init_uart_f();
@@ -209,6 +238,37 @@ int board_early_init_f(void)
 }
 #endif	/* EARLY_INIT */
 
+#ifndef CONFIG_TEGRA186
+static void nvidia_board_late_init_generic(void)
+{
+	char serialno_str[17];
+
+	/* Set chip id as serialno */
+	sprintf(serialno_str, "%016llx", tegra_chip_uid());
+	env_set("serial#", serialno_str);
+
+	switch (tegra_get_chip()) {
+	case CHIPID_TEGRA20:
+		env_set("platform", "tegra20");
+		break;
+	case CHIPID_TEGRA30:
+		env_set("platform", "tegra30");
+		break;
+	case CHIPID_TEGRA114:
+		env_set("platform", "tegra114");
+		break;
+	case CHIPID_TEGRA124:
+		env_set("platform", "tegra124");
+		break;
+	case CHIPID_TEGRA210:
+		env_set("platform", "tegra210");
+		break;
+	default:
+		return;
+	}
+}
+#endif
+
 int board_late_init(void)
 {
 #if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
@@ -220,6 +280,16 @@ int board_late_init(void)
 	}
 #endif
 	start_cpu_fan();
+	cboot_late_init();
+
+	/*
+	 * Perform generic env setup in case
+	 * vendor does not provide it.
+	 */
+#ifndef CONFIG_TEGRA186
+	nvidia_board_late_init_generic();
+#endif
+	nvidia_board_late_init();
 
 	return 0;
 }
@@ -250,6 +320,10 @@ static ulong carveout_size(void)
 {
 #ifdef CONFIG_ARM64
 	return SZ_512M;
+#elif defined(CONFIG_ARMV7_SECURE_RESERVE_SIZE)
+	// BASE+SIZE might not == 4GB. If so, we want the carveout to cover
+	// from BASE to 4GB, not BASE to BASE+SIZE.
+	return (0 - CONFIG_ARMV7_SECURE_BASE) & ~(SZ_2M - 1);
 #else
 	return 0;
 #endif
@@ -310,12 +384,17 @@ static ulong usable_ram_size_below_4g(void)
  */
 int dram_init_banksize(void)
 {
-	gd->bd->bi_dram[0].start = CONFIG_SYS_SDRAM_BASE;
-	gd->bd->bi_dram[0].size = usable_ram_size_below_4g();
+	int err;
 
-#ifdef CONFIG_PCI
-	gd->pci_ram_top = gd->bd->bi_dram[0].start + gd->bd->bi_dram[0].size;
-#endif
+	/* try to compute DRAM bank size based on cboot DTB first */
+	err = cboot_dram_init_banksize();
+	if (err == 0)
+		return err;
+
+	/* fall back to default DRAM bank size computation */
+
+	gd->bd->bi_dram[0].start = CFG_SYS_SDRAM_BASE;
+	gd->bd->bi_dram[0].size = usable_ram_size_below_4g();
 
 #ifdef CONFIG_PHYS_64BIT
 	if (gd->ram_size > SZ_2G) {
@@ -341,7 +420,31 @@ int dram_init_banksize(void)
  * This function is called before dram_init_banksize(), so we can't simply
  * return gd->bd->bi_dram[1].start + gd->bd->bi_dram[1].size.
  */
-ulong board_get_usable_ram_top(ulong total_size)
+phys_addr_t board_get_usable_ram_top(phys_size_t total_size)
 {
-	return CONFIG_SYS_SDRAM_BASE + usable_ram_size_below_4g();
+	ulong ram_top;
+
+	/* try to get top of usable RAM based on cboot DTB first */
+	ram_top = cboot_get_usable_ram_top(total_size);
+	if (ram_top > 0)
+		return ram_top;
+
+	/* fall back to default usable RAM computation */
+
+	return CFG_SYS_SDRAM_BASE + usable_ram_size_below_4g();
 }
+
+#if IS_ENABLED(CONFIG_DTB_RESELECT)
+int embedded_dtb_select(void)
+{
+	int ret, rescan;
+
+	ret = fdtdec_resetup(&rescan);
+	if (!ret && rescan) {
+		dm_uninit();
+		dm_init_and_scan(true);
+	}
+
+	return 0;
+}
+#endif

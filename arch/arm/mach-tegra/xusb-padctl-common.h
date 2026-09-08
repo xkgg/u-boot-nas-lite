@@ -1,13 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2014-2015, NVIDIA CORPORATION.  All rights reserved.
- *
- * SPDX-License-Identifier: GPL-2.0
  */
 
 #ifndef _TEGRA_XUSB_PADCTL_COMMON_H_
 #define _TEGRA_XUSB_PADCTL_COMMON_H_
 
-#include <common.h>
 #include <fdtdec.h>
 #include <dm/ofnode.h>
 

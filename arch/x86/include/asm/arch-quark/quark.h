@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _QUARK_H_
@@ -71,6 +70,8 @@
 #define MTRR_VAR_PHYMASK(n)	(0x5b + 2 * (n))
 
 #ifndef __ASSEMBLY__
+
+#include <linux/types.h>
 
 /* variable range MTRR usage */
 enum {

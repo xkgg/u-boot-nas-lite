@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2015 Vishnu Patekar <vishnupatekar0510@gmail.com>
  *
  * X-Powers AXP818 Power Management IC driver
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #define AXP818_CHIP_ID		0x03
@@ -59,12 +58,9 @@
 #define AXP818_SHUTDOWN_POWEROFF	(1 << 7)
 
 /* For axp_gpio.c */
+#ifdef CONFIG_AXP818_POWER
 #define AXP_POWER_STATUS		0x00
-#define AXP_POWER_STATUS_VBUS_PRESENT		(1 << 5)
-#define AXP_VBUS_IPSOUT			0x30
-#define AXP_VBUS_IPSOUT_DRIVEBUS		(1 << 2)
-#define AXP_MISC_CTRL			0x8f
-#define AXP_MISC_CTRL_N_VBUSEN_FUNC		(1 << 4)
+#define AXP_POWER_STATUS_ALDO_IN		BIT(0)
 #define AXP_GPIO0_CTRL			0x90
 #define AXP_GPIO1_CTRL			0x92
 #define AXP_GPIO_CTRL_OUTPUT_LOW	0x00 /* Drive pin low */
@@ -72,3 +68,4 @@
 #define AXP_GPIO_CTRL_INPUT		0x02 /* Input */
 #define AXP_GPIO_STATE			0x94
 #define AXP_GPIO_STATE_OFFSET		0
+#endif

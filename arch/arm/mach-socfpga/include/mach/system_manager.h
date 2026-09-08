@@ -1,12 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2013-2017 Altera Corporation <www.altera.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _SYSTEM_MANAGER_H_
 #define _SYSTEM_MANAGER_H_
 
+phys_addr_t socfpga_get_sysmgr_addr(void);
+
+#if defined(CONFIG_ARCH_SOCFPGA_SOC64)
+#include <asm/arch/system_manager_soc64.h>
+#else
 #define SYSMGR_ROMCODEGRP_CTRL_WARMRSTCFGPINMUX	BIT(0)
 #define SYSMGR_ROMCODEGRP_CTRL_WARMRSTCFGIO	BIT(1)
 #define SYSMGR_ECC_OCRAM_EN	BIT(0)
@@ -81,13 +85,14 @@
 #define ALT_SYSMGR_ECC_INTSTAT_SERR_OCRAM_SET_MSK	BIT(1)
 #define ALT_SYSMGR_ECC_INTSTAT_DERR_OCRAM_SET_MSK	BIT(1)
 
-#if defined(CONFIG_TARGET_SOCFPGA_GEN5)
+#if defined(CONFIG_ARCH_SOCFPGA_GEN5)
 #include <asm/arch/system_manager_gen5.h>
-#elif defined(CONFIG_TARGET_SOCFPGA_ARRIA10)
+#elif defined(CONFIG_ARCH_SOCFPGA_ARRIA10)
 #include <asm/arch/system_manager_arria10.h>
 #endif
 
 #define SYSMGR_GET_BOOTINFO_BSEL(bsel)		\
 		(((bsel) >> SYSMGR_BOOTINFO_BSEL_SHIFT) & 7)
-
+#include <linux/bitops.h>
+#endif
 #endif /* _SYSTEM_MANAGER_H_ */

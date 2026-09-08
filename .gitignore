@@ -3,61 +3,100 @@
 # subdirectories here. Add them in the ".gitignore" file
 # in that subdirectory instead.
 #
-# Normal rules
+# Normal rules (sorted alphabetically)
 #
 .*
+!.checkpatch.conf
+*.a
+*.asn1.[ch]
+*.bin
+*.bin[_.]*
+*.cfgout
+*.cover
+*.dtb
+*.dtbo
+*.dtb.S
+*.dtb.clean.dts
+*.dtb.diff
+*.dtb.full.dts
+*.elf
+*.exe
+*.fit
+*.gcda
+*.gcno
+*.i
+*.img
+*.itb
+*.lex.c
+*.lst
+*.map
+*.mod.c
+*.mbx
 *.o
 *.o.*
-*.a
+*.order
+*.patch
+*.pem
 *.s
 *.su
-*.mod.c
-*.i
-*.lst
-*.order
-*.elf
 *.swp
-*.bin
-*.patch
-*.cfgtmp
-*.img
-
-# host programs on Cygwin
-*.exe
-
+*.tab.[ch]
+*.ti-*
 # Build tree
-/build-*
-/rockdev
+/build*
+
 #
 # Top-level generic files
 #
-fit-dtb.blob
+fit-dtb.blob*
 /MLO*
 /SPL*
 /System.map
-/u-boot*
 /boards.cfg
+/mkimage*mkimage
+/mkimage-in-simple-bin*
+/simple-bin*
+/u-boot*
+/*.log
 
 #
-# git files that we don't want to ignore even it they are dot-files
+# We don't want to ignore the following even if they are dot-files
 #
+!.clang-format
+!.get_maintainer.*
+!.gitattributes
 !.gitignore
 !.mailmap
 
 #
 # Generated files
 #
-/LOG
-/fit/
 /spl/
 /tpl/
+/vpl/
 /defconfig
+/generated_defconfig
+/Test*
+/capsule*.efi-capsule
+/capsule*.map
+/keep-syms-lto.*
+/*imx8mimage*
+/*imx8mcst*
+/*rcar4-sa0*
+/drivers/video/u_boot_logo.bmp.S
+/test/fdt_overlay/test-fdt-overlay-stacked.dtbo.S
+/test/fdt_overlay/test-fdt-overlay.dtbo.S
+capsule_esl_file
 
 #
 # Generated include files
 #
+/include/autoconf.mk*
+/include/config.h
 /include/config/
 /include/generated/
+/include/bmp_logo.h
+/include/bmp_logo_data.h
 
 # stgit generated dirs
 patches-*
@@ -87,3 +126,19 @@ GTAGS
 *.orig
 *~
 \#*#
+
+# Python cache
+__pycache__
+
+# Python code coverage output (python3-coverage html)
+/htmlcov/
+
+# pylint files
+/pylint.cur
+/pylint.out/
+
+# qconfig database
+/qconfig.db
+
+# Clang's compilation database file
+/compile_commands.json

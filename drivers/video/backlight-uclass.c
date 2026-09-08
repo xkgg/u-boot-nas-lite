@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2016 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#define LOG_CATEGORY UCLASS_PANEL_BACKLIGHT
+
 #include <dm.h>
 #include <backlight.h>
 
@@ -19,14 +19,14 @@ int backlight_enable(struct udevice *dev)
 	return ops->enable(dev);
 }
 
-int backlight_disable(struct udevice *dev)
+int backlight_set_brightness(struct udevice *dev, int percent)
 {
 	const struct backlight_ops *ops = backlight_get_ops(dev);
 
-	if (!ops->disable)
+	if (!ops->set_brightness)
 		return -ENOSYS;
 
-	return ops->disable(dev);
+	return ops->set_brightness(dev, percent);
 }
 
 UCLASS_DRIVER(backlight) = {

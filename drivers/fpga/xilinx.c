@@ -1,28 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2012-2013, Xilinx, Michal Simek
  *
  * (C) Copyright 2002
  * Rich Ireland, Enterasys Networks, rireland@enterasys.com.
  * Keith Outwater, keith_outwater@mvis.com
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
  *  Xilinx FPGA support
  */
 
-#include <common.h>
+#include <env.h>
 #include <fpga.h>
+#include <log.h>
 #include <virtex2.h>
 #include <spartan2.h>
 #include <spartan3.h>
 #include <zynqpl.h>
+#include <linux/string.h>
 
 /* Local Static Functions */
 static int xilinx_validate(xilinx_desc *desc, char *fn);
 
 /* ------------------------------------------------------------------------- */
+
+int fpga_is_partial_data(int devnum, size_t img_len)
+{
+	const fpga_desc * const desc = fpga_get_desc(devnum);
+	xilinx_desc *desc_xilinx = desc->devdesc;
+
+	/* Check datasize against FPGA size */
+	if (img_len >= desc_xilinx->size)
+		return 0;
+
+	/* datasize is smaller, must be partial data */
+	return 1;
+}
 
 int fpga_loadbitstream(int devnum, char *fpgadata, size_t size,
 		       bitstream_type bstype)
@@ -36,7 +50,10 @@ int fpga_loadbitstream(int devnum, char *fpgadata, size_t size,
 
 	dataptr = (unsigned char *)fpgadata;
 	/* Find out fpga_description */
-	desc = fpga_validate(devnum, dataptr, 0, (char *)__func__);
+	desc = fpga_validate(devnum, dataptr, 0);
+	if (!desc)
+		return FPGA_FAIL;
+
 	/* Assign xilinx device description */
 	xdesc = desc->devdesc;
 
@@ -76,7 +93,11 @@ int fpga_loadbitstream(int devnum, char *fpgadata, size_t size,
 			       __func__);
 			printf("%s: Bitstream ID %s, current device ID %d/%s\n",
 			       __func__, dataptr, devnum, xdesc->name);
-			return FPGA_FAIL;
+			if (!CONFIG_IS_ENABLED(ENV_SUPPORT) ||
+			    env_get_yesno("fpga_skip_idcheck") != 1)
+				return FPGA_FAIL;
+
+			printf("%s: Skipping ID check\n", __func__);
 		}
 	} else {
 		printf("%s: Please fill correct device ID to xilinx_desc\n",
@@ -122,11 +143,11 @@ int fpga_loadbitstream(int devnum, char *fpgadata, size_t size,
 	dataptr += 4;
 	printf("  bytes in bitstream = %d\n", swapsize);
 
-	return fpga_load(devnum, dataptr, swapsize, bstype);
+	return fpga_load(devnum, dataptr, swapsize, bstype, 0);
 }
 
 int xilinx_load(xilinx_desc *desc, const void *buf, size_t bsize,
-		bitstream_type bstype)
+		bitstream_type bstype, int flags)
 {
 	if (!xilinx_validate (desc, (char *)__FUNCTION__)) {
 		printf ("%s: Invalid device descriptor\n", __FUNCTION__);
@@ -138,7 +159,7 @@ int xilinx_load(xilinx_desc *desc, const void *buf, size_t bsize,
 		return FPGA_FAIL;
 	}
 
-	return desc->operations->load(desc, buf, bsize, bstype);
+	return desc->operations->load(desc, buf, bsize, bstype, flags);
 }
 
 #if defined(CONFIG_CMD_FPGA_LOADFS)
@@ -156,6 +177,24 @@ int xilinx_loadfs(xilinx_desc *desc, const void *buf, size_t bsize,
 	}
 
 	return desc->operations->loadfs(desc, buf, bsize, fpga_fsinfo);
+}
+#endif
+
+#if CONFIG_IS_ENABLED(FPGA_LOAD_SECURE)
+int xilinx_loads(xilinx_desc *desc, const void *buf, size_t bsize,
+		 struct fpga_secure_info *fpga_sec_info)
+{
+	if (!xilinx_validate(desc, (char *)__func__)) {
+		printf("%s: Invalid device descriptor\n", __func__);
+		return FPGA_FAIL;
+	}
+
+	if (!desc->operations || !desc->operations->loads) {
+		printf("%s: Missing loads operation\n", __func__);
+		return FPGA_FAIL;
+	}
+
+	return desc->operations->loads(desc, buf, bsize, fpga_sec_info);
 }
 #endif
 
@@ -196,7 +235,10 @@ int xilinx_info(xilinx_desc *desc)
 		case xilinx_zynqmp:
 			printf("ZynqMP PL\n");
 			break;
-			/* Add new family types here */
+		case xilinx_versal:
+			printf("Versal PL\n");
+			break;
+		/* Add new family types here */
 		default:
 			printf ("Unknown family type, %d\n", desc->family);
 		}
@@ -226,6 +268,9 @@ int xilinx_info(xilinx_desc *desc)
 			break;
 		case csu_dma:
 			printf("csu_dma configuration interface (ZynqMP)\n");
+			break;
+		case cfi:
+			printf("CFI configuration interface (Versal)\n");
 			break;
 			/* Add new interface types here */
 		default:

@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Sun8i platform dram controller init.
  *
  * (C) Copyright 2014 Hans de Goede <hdegoede@redhat.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -15,17 +14,18 @@
  *
  * The register-layout of the sunxi_mctl_phy_reg-s looks a lot like the one
  * found in the TI Keystone2 documentation:
- * http://www.ti.com/lit/ug/spruhn7a/spruhn7a.pdf
+ * https://www.ti.com/lit/ug/spruhn7a/spruhn7a.pdf
  * "Table4-2 DDR3 PHY Registers"
  * This may be used as a (possible) reference for future work / cleanups.
  */
 
-#include <common.h>
 #include <errno.h>
+#include <init.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/dram.h>
 #include <asm/arch/prcm.h>
+#include <linux/delay.h>
 
 static const struct dram_para dram_para = {
 	.clock = CONFIG_DRAM_CLK,

@@ -1,7 +1,7 @@
 /*
  * mux.c
  *
- * Copyright (C) 2011 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2011 Texas Instruments Incorporated - https://www.ti.com/
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -13,7 +13,6 @@
  * GNU General Public License for more details.
  */
 
-#include <common.h>
 #include <asm/arch/mux.h>
 #include <asm/arch/hardware.h>
 #include <asm/io.h>
@@ -30,4 +29,18 @@ void configure_module_pin_mux(struct module_pin_mux *mod_pin_mux)
 
 	for (i = 0; mod_pin_mux[i].reg_offset != -1; i++)
 		MUX_CFG(mod_pin_mux[i].val, mod_pin_mux[i].reg_offset);
+}
+
+/*
+ * provide a default over-writable definition
+*/
+void __weak set_uart_mux_conf(void)
+{
+}
+
+/*
+* provide a default over-writable definition
+*/
+void __weak set_mux_conf_regs(void)
+{
 }

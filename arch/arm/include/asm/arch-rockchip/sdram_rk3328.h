@@ -6,10 +6,10 @@
 
 #ifndef _ASM_ARCH_SDRAM_RK3328_H
 #define _ASM_ARCH_SDRAM_RK3328_H
-#include <asm/arch/sdram_common.h>
-#include <asm/arch/sdram_pctl_px30.h>
-#include <asm/arch/sdram_phy_px30.h>
-#include <asm/arch/sdram_phy_ron_rtt_px30.h>
+#include <asm/arch-rockchip/sdram_common.h>
+#include <asm/arch-rockchip/sdram_pctl_px30.h>
+#include <asm/arch-rockchip/sdram_phy_px30.h>
+#include <asm/arch-rockchip/sdram_phy_ron_rtt_px30.h>
 
 #define SR_IDLE		93
 #define PD_IDLE		13
@@ -32,7 +32,7 @@
 
 /* DDR GRF */
 #define DDR_GRF_CON(n)		(0 + (n) * 4)
-#define DDR_GRF_STATUS_BASE	(0X100)
+#define DDR_GRF_STATUS_BASE	(0x100)
 #define DDR_GRF_STATUS(n)	(DDR_GRF_STATUS_BASE + (n) * 4)
 
 /* CRU_SOFTRESET_CON5 */

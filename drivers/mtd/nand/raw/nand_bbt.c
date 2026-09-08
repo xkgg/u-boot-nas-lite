@@ -57,8 +57,10 @@
  *
  */
 
-#include <common.h>
+#include <log.h>
 #include <malloc.h>
+#include <dm/devres.h>
+#include <linux/bug.h>
 #include <linux/compat.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/bbm.h>
@@ -487,10 +489,8 @@ static int create_bbt(struct mtd_info *mtd, uint8_t *buf,
 		int ret;
 
 		BUG_ON(bd->options & NAND_BBT_NO_OOB);
-		if (this->block_bad)
-			ret = this->block_bad(mtd, from);
-		else
-			ret = scan_block_fast(mtd, bd, from, buf, numpages);
+
+		ret = scan_block_fast(mtd, bd, from, buf, numpages);
 		if (ret < 0)
 			return ret;
 
@@ -1329,6 +1329,7 @@ int nand_isreserved_bbt(struct mtd_info *mtd, loff_t offs)
  * @mtd: MTD device structure
  * @offs: offset in the device
  * @allowbbt: allow access to bad block table region
+ * Return: 0 - good block, 1- bad block, 2 - reserved block
  */
 int nand_isbad_bbt(struct mtd_info *mtd, loff_t offs, int allowbbt)
 {
@@ -1347,7 +1348,7 @@ int nand_isbad_bbt(struct mtd_info *mtd, loff_t offs, int allowbbt)
 	case BBT_BLOCK_WORN:
 		return 1;
 	case BBT_BLOCK_RESERVED:
-		return allowbbt ? 0 : 1;
+		return allowbbt ? 0 : 2;
 	}
 	return 1;
 }

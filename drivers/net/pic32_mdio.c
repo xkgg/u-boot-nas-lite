@@ -1,17 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * pic32_mdio.c: PIC32 MDIO/MII driver, part of pic32_eth.c.
  *
  * Copyright 2015 Microchip Inc.
  *	Purna Chandra Mandal <purna.mandal@microchip.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-#include <common.h>
 #include <phy.h>
 #include <miiphy.h>
 #include <errno.h>
 #include <wait_bit.h>
 #include <asm/io.h>
+#include <linux/delay.h>
 #include "pic32_eth.h"
 
 static int pic32_mdio_write(struct mii_dev *bus,

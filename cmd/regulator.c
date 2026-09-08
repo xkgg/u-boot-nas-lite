@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2014-2015 Samsung Electronics
  * Przemyslaw Marczak <p.marczak@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-#include <common.h>
+#include <command.h>
 #include <errno.h>
 #include <dm.h>
 #include <dm/uclass-internal.h>
+#include <linux/printk.h>
 #include <power/regulator.h>
 
 #define LIMIT_DEVNAME	20
@@ -23,9 +23,9 @@ static int failure(int ret)
 	return CMD_RET_FAILURE;
 }
 
-static int do_dev(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_dev(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	const char *name;
 	int ret = -ENXIO;
 
@@ -37,13 +37,14 @@ static int do_dev(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			printf("Can't get the regulator: %s!\n", name);
 			return failure(ret);
 		}
+		fallthrough;
 	case 1:
 		if (!currdev) {
 			printf("Regulator device is not set!\n\n");
 			return CMD_RET_USAGE;
 		}
 
-		uc_pdata = dev_get_uclass_platdata(currdev);
+		uc_pdata = dev_get_uclass_plat(currdev);
 		if (!uc_pdata) {
 			printf("%s: no regulator platform data!\n", currdev->name);
 			return failure(ret);
@@ -55,9 +56,9 @@ static int do_dev(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static int curr_dev_and_platdata(struct udevice **devp,
-				 struct dm_regulator_uclass_platdata **uc_pdata,
-				 bool allow_type_fixed)
+static int curr_dev_and_plat(struct udevice **devp,
+			     struct dm_regulator_uclass_plat **uc_pdata,
+			     bool allow_type_fixed)
 {
 	*devp = NULL;
 	*uc_pdata = NULL;
@@ -69,9 +70,9 @@ static int curr_dev_and_platdata(struct udevice **devp,
 
 	*devp = currdev;
 
-	*uc_pdata = dev_get_uclass_platdata(*devp);
+	*uc_pdata = dev_get_uclass_plat(*devp);
 	if (!*uc_pdata) {
-		pr_err("Regulator: %s - missing platform data!", currdev->name);
+		pr_err("Regulator: %s - missing platform data!\n", currdev->name);
 		return CMD_RET_FAILURE;
 	}
 
@@ -83,9 +84,10 @@ static int curr_dev_and_platdata(struct udevice **devp,
 	return CMD_RET_SUCCESS;
 }
 
-static int do_list(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_list(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	struct udevice *dev;
 	int ret;
 
@@ -94,12 +96,12 @@ static int do_list(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	       LIMIT_OFNAME, LIMIT_OFNAME, "regulator-name",
 	       "Parent");
 
-	for (ret = uclass_find_first_device(UCLASS_REGULATOR, &dev); dev;
-	     ret = uclass_find_next_device(&dev)) {
-		if (ret)
-			continue;
+	ret = uclass_find_first_device(UCLASS_REGULATOR, &dev);
+	if (ret)
+		return ret;
 
-		uc_pdata = dev_get_uclass_platdata(dev);
+	for (; dev; uclass_find_next_device(&dev)) {
+		uc_pdata = dev_get_uclass_plat(dev);
 		printf("| %-*.*s| %-*.*s| %s\n",
 		       LIMIT_DEVNAME, LIMIT_DEVNAME, dev->name,
 		       LIMIT_OFNAME, LIMIT_OFNAME, uc_pdata->name,
@@ -138,17 +140,18 @@ static const char *get_mode_name(struct dm_regulator_mode *mode,
 	return NULL;
 }
 
-static int do_info(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_info(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	struct dm_regulator_mode *modes;
 	const char *parent_uc;
 	int mode_count;
 	int ret;
 	int i;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, true);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, true);
 	if (ret)
 		return ret;
 
@@ -181,7 +184,7 @@ static int do_info(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 }
 
 static void do_status_detail(struct udevice *dev,
-			     struct dm_regulator_uclass_platdata *uc_pdata)
+			     struct dm_regulator_uclass_plat *uc_pdata)
 {
 	int current, value, mode;
 	const char *mode_name;
@@ -203,14 +206,14 @@ static void do_status_detail(struct udevice *dev,
 	constraint(" * mode id:", mode, mode_name);
 }
 
-static void do_status_line(struct udevice *dev)
+static void do_status_line(struct udevice *dev, int status)
 {
-	struct dm_regulator_uclass_platdata *pdata;
+	struct dm_regulator_uclass_plat *pdata;
 	int current, value, mode;
 	const char *mode_name;
 	bool enabled;
 
-	pdata = dev_get_uclass_platdata(dev);
+	pdata = dev_get_uclass_plat(dev);
 	enabled = regulator_get_enable(dev);
 	value = regulator_get_value(dev);
 	current = regulator_get_current(dev);
@@ -229,17 +232,19 @@ static void do_status_line(struct udevice *dev)
 		printf("%-10s", mode_name);
 	else
 		printf("%-10s", "-");
+	printf(" %i", status);
 	printf("\n");
 }
 
-static int do_status(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_status(struct cmd_tbl *cmdtp, int flag, int argc,
+		     char *const argv[])
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	struct udevice *dev;
 	int ret;
 
 	if (currdev && (argc < 2 || strcmp(argv[1], "-a"))) {
-		ret = curr_dev_and_platdata(&dev, &uc_pdata, true);
+		ret = curr_dev_and_plat(&dev, &uc_pdata, true);
 		if (ret)
 			return CMD_RET_FAILURE;
 		do_status_detail(dev, uc_pdata);
@@ -247,24 +252,25 @@ static int do_status(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	}
 
 	/* Show all of them in a list, probing them as needed */
-	printf("%-20s %-10s %10s %10s %-10s\n", "Name", "Enabled", "uV", "mA",
-	       "Mode");
-	for (ret = uclass_first_device(UCLASS_REGULATOR, &dev); dev;
-	     ret = uclass_next_device(&dev))
-		do_status_line(dev);
+	printf("%-20s %-10s %10s %10s %-10s %s\n", "Name", "Enabled", "uV", "mA",
+	       "Mode", "Status");
+	for (ret = uclass_first_device_check(UCLASS_REGULATOR, &dev); dev;
+	     ret = uclass_next_device_check(&dev))
+		do_status_line(dev, ret);
 
 	return CMD_RET_SUCCESS;
 }
 
-static int do_value(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_value(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	int value;
 	int force;
 	int ret;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, argc == 1);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, argc == 1);
 	if (ret)
 		return ret;
 
@@ -305,14 +311,15 @@ static int do_value(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static int do_current(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_current(struct cmd_tbl *cmdtp, int flag, int argc,
+		      char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	int current;
 	int ret;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, argc == 1);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, argc == 1);
 	if (ret)
 		return ret;
 
@@ -344,14 +351,15 @@ static int do_current(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static int do_mode(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_mode(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	int mode;
 	int ret;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, false);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, false);
 	if (ret)
 		return ret;
 
@@ -379,13 +387,14 @@ static int do_mode(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static int do_enable(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_enable(struct cmd_tbl *cmdtp, int flag, int argc,
+		     char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	int ret;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, true);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, true);
 	if (ret)
 		return ret;
 
@@ -398,13 +407,14 @@ static int do_enable(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static int do_disable(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_disable(struct cmd_tbl *cmdtp, int flag, int argc,
+		      char *const argv[])
 {
 	struct udevice *dev;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	int ret;
 
-	ret = curr_dev_and_platdata(&dev, &uc_pdata, true);
+	ret = curr_dev_and_plat(&dev, &uc_pdata, true);
 	if (ret)
 		return ret;
 
@@ -417,7 +427,7 @@ static int do_disable(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return CMD_RET_SUCCESS;
 }
 
-static cmd_tbl_t subcmd[] = {
+static struct cmd_tbl subcmd[] = {
 	U_BOOT_CMD_MKENT(dev, 2, 1, do_dev, "", ""),
 	U_BOOT_CMD_MKENT(list, 1, 1, do_list, "", ""),
 	U_BOOT_CMD_MKENT(info, 2, 1, do_info, "", ""),
@@ -429,10 +439,10 @@ static cmd_tbl_t subcmd[] = {
 	U_BOOT_CMD_MKENT(disable, 1, 1, do_disable, "", ""),
 };
 
-static int do_regulator(cmd_tbl_t *cmdtp, int flag, int argc,
-			char * const argv[])
+static int do_regulator(struct cmd_tbl *cmdtp, int flag, int argc,
+			char *const argv[])
 {
-	cmd_tbl_t *cmd;
+	struct cmd_tbl *cmd;
 
 	argc--;
 	argv++;

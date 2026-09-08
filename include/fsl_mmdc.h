@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef FSL_MMDC_H
@@ -12,7 +11,6 @@
 
 /* PHY Pre-defined Compare and CA delay-line Configuration (MPPDCMPR2) */
 #define MPPDCMPR2_MPR_COMPARE_EN	(1 << 0)
-
 
 /* MMDC PHY Read DQS gating control register 0 (MPDGCTRL0) */
 #define AUTO_RD_DQS_GATING_CALIBRATION_EN	(1 << 28)

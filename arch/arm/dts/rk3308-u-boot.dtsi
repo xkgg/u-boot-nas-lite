@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2018 Rockchip Electronics Co., Ltd
- *
- * SPDX-License-Identifier:     GPL-2.0+
+ *(C) Copyright 2019 Rockchip Electronics Co., Ltd
  */
+
+#include "rockchip-u-boot.dtsi"
 
 / {
 	aliases {
@@ -11,163 +12,116 @@
 	};
 
 	chosen {
-		stdout-path = &uart2;
-		u-boot,spl-boot-order = &sdmmc, &spi_nand, &spi_nor, &nandc, &emmc;
+		u-boot,spl-boot-order = "same-as-spl", &sdmmc, &emmc;
 	};
-};
 
-&psci {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
+	dmc: dmc@ff010000 {
+		compatible = "rockchip,rk3308-dmc";
+		reg = <0x0 0xff010000 0x0 0x10000>;
+		bootph-all;
+	};
 
-&dmc {
-	u-boot,dm-pre-reloc;
+	rng: rng@ff2f0000 {
+		compatible = "rockchip,cryptov2-rng";
+		reg = <0x0 0xff2f0000 0x0 0x4000>;
+	};
 };
 
 &cru {
-	u-boot,dm-pre-reloc;
+	bootph-all;
 };
 
 &emmc {
-	u-boot,dm-pre-reloc;
+	bootph-pre-ram;
+	bootph-some-ram;
+
+	/* mmc to sram can't do dma, prevent aborts transferring TF-A parts */
+	u-boot,spl-fifo-mode;
+};
+
+&emmc_bus8 {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&emmc_clk {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&emmc_cmd {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
 &grf {
-	u-boot,dm-pre-reloc;
+	bootph-all;
 };
 
-&nandc {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	nand@0 {
-		u-boot,dm-spl;
-		reg = <0>;
-		nand-ecc-mode = "hw";
-		nand-ecc-strength = <16>;
-		nand-ecc-step-size = <1024>;
-	};
-};
-
-&pinctrl {
-	u-boot,dm-pre-reloc;
+&pcfg_pull_none {
+	bootph-all;
 };
 
 &pcfg_pull_none_4ma {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_none_8ma {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_up {
+	bootph-all;
 };
 
 &pcfg_pull_up_4ma {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_up_8ma {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pinctrl {
+	bootph-all;
+};
+
+&rtc_32k {
+	bootph-all;
 };
 
 &sdmmc {
-	u-boot,dm-pre-reloc;
-};
+	bootph-pre-ram;
+	bootph-some-ram;
 
-&sdmmc_pin {
-	u-boot,dm-spl;
-};
-
-&sdmmc_clk {
-	u-boot,dm-spl;
-};
-
-&sdmmc_cmd {
-	u-boot,dm-spl;
+	/* mmc to sram can't do dma, prevent aborts transferring TF-A parts */
+	u-boot,spl-fifo-mode;
 };
 
 &sdmmc_bus4 {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&sdmmc_pwren {
-	u-boot,dm-spl;
+&sdmmc_clk {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&sfc {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-
-	#address-cells = <1>;
-	#size-cells = <0>;
-	spi_nand: flash@0 {
-		u-boot,dm-spl;
-		compatible = "spi-nand";
-		reg = <0>;
-		spi-tx-bus-width = <1>;
-		spi-rx-bus-width = <4>;
-		spi-max-frequency = <96000000>;
-	};
-	spi_nor: flash@1 {
-		u-boot,dm-spl;
-		compatible = "jedec,spi-nor";
-		label = "sfc_nor";
-		reg = <0>;
-		spi-tx-bus-width = <1>;
-		spi-rx-bus-width = <4>;
-		spi-max-frequency = <96000000>;
-	};
+&sdmmc_cmd {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&crypto {
-	u-boot,dm-pre-reloc;
-	status = "okay";
+&sdmmc_det {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&saradc {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
-
-&secure_otp {
-	u-boot,dm-pre-reloc;
-};
-
-&uart0 {
-	u-boot,dm-pre-reloc;
-};
-
-&uart1 {
-	u-boot,dm-pre-reloc;
-};
-
-&uart2 {
-	u-boot,dm-pre-reloc;
-	clock-frequency = <24000000>;
-	status = "okay";
-};
-
-&uart3 {
-	u-boot,dm-pre-reloc;
-};
-
-&uart4 {
-	u-boot,dm-pre-reloc;
-};
-
-&usb2phy_grf {
-	u-boot,dm-pre-reloc;
-};
-
-&u2phy {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
-
-&u2phy_otg {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
-
-&usb20_otg {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
-
-&route_rgb {
-	status = "disabled";
+&xin24m {
+	bootph-all;
 };

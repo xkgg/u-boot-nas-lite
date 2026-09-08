@@ -1,37 +1,51 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <command.h>
+#include <env.h>
+#include <gzip.h>
+#include <mapmem.h>
+#include <part.h>
+#include <vsprintf.h>
 
-static int do_unzip(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_unzip(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	unsigned long src, dst;
 	unsigned long src_len = ~0UL, dst_len = ~0UL;
+	void *srcp, *dstp;
+	int ret;
 
 	switch (argc) {
 		case 4:
-			dst_len = simple_strtoul(argv[3], NULL, 16);
+			dst_len = hextoul(argv[3], NULL);
 			/* fall through */
 		case 3:
-			src = simple_strtoul(argv[1], NULL, 16);
-			dst = simple_strtoul(argv[2], NULL, 16);
+			src = hextoul(argv[1], NULL);
+			dst = hextoul(argv[2], NULL);
 			break;
 		default:
 			return CMD_RET_USAGE;
 	}
 
-	if (gunzip((void *) dst, dst_len, (void *) src, &src_len) != 0)
-		return 1;
+	srcp = map_sysmem(dst, dst_len);
+	dstp = map_sysmem(src, 0);
 
-	printf("Uncompressed size: %ld = 0x%lX\n", src_len, src_len);
+	ret = gunzip(srcp, dst_len, dstp, &src_len);
+
+	unmap_sysmem(dstp);
+	unmap_sysmem(srcp);
+
+	if (ret)
+		return CMD_RET_FAILURE;
+
+	printf("Uncompressed size: %lu = 0x%lX\n", src_len, src_len);
 	env_set_hex("filesize", src_len);
 
-	return 0;
+	return CMD_RET_SUCCESS;
 }
 
 U_BOOT_CMD(
@@ -40,16 +54,17 @@ U_BOOT_CMD(
 	"srcaddr dstaddr [dstsize]"
 );
 
-static int do_gzwrite(cmd_tbl_t *cmdtp, int flag,
-		      int argc, char * const argv[])
+static int do_gzwrite(struct cmd_tbl *cmdtp, int flag,
+		      int argc, char *const argv[])
 {
 	struct blk_desc *bdev;
 	int ret;
-	unsigned char *addr;
+	unsigned long addr;
 	unsigned long length;
 	unsigned long writebuf = 1<<20;
-	u64 startoffs = 0;
-	u64 szexpected = 0;
+	off_t startoffs = 0;
+	size_t szexpected = 0;
+	void *addrp;
 
 	if (argc < 5)
 		return CMD_RET_USAGE;
@@ -57,11 +72,11 @@ static int do_gzwrite(cmd_tbl_t *cmdtp, int flag,
 	if (ret < 0)
 		return CMD_RET_FAILURE;
 
-	addr = (unsigned char *)simple_strtoul(argv[3], NULL, 16);
-	length = simple_strtoul(argv[4], NULL, 16);
+	addr = hextoul(argv[3], NULL);
+	length = hextoul(argv[4], NULL);
 
 	if (5 < argc) {
-		writebuf = simple_strtoul(argv[5], NULL, 16);
+		writebuf = hextoul(argv[5], NULL);
 		if (6 < argc) {
 			startoffs = simple_strtoull(argv[6], NULL, 16);
 			if (7 < argc)
@@ -70,7 +85,11 @@ static int do_gzwrite(cmd_tbl_t *cmdtp, int flag,
 		}
 	}
 
-	ret = gzwrite(addr, length, bdev, writebuf, startoffs, szexpected);
+	addrp = map_sysmem(addr, length);
+
+	ret = gzwrite(addrp, length, bdev, writebuf, startoffs, szexpected);
+
+	unmap_sysmem(addrp);
 
 	return ret ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
 }

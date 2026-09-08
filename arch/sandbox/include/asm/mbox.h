@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2016, NVIDIA CORPORATION.
- *
- * SPDX-License-Identifier: GPL-2.0
  */
 
 #ifndef __SANDBOX_MBOX_H
 #define __SANDBOX_MBOX_H
-
-#include <common.h>
 
 #define SANDBOX_MBOX_PING_XOR 0x12345678
 

@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
  * Copyright (C) 1995-1996  Gary Thomas (gdt@linuxppc.org)
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -12,7 +11,8 @@
  * exceptions
  */
 
-#include <common.h>
+#include <asm/global_data.h>
+#include <asm/ptrace.h>
 #include <command.h>
 #include <kgdb.h>
 #include <asm/processor.h>
@@ -23,7 +23,7 @@ DECLARE_GLOBAL_DATA_PTR;
 /* Returns 0 if exception not found and fixup otherwise.  */
 extern unsigned long search_exception_table(unsigned long);
 
-#define END_OF_MEM	(gd->bd->bi_memstart + gd->bd->bi_memsize)
+#define END_OF_MEM	(gd->ram_base + gd->ram_size)
 
 /*
  * Trap & Exception support
@@ -73,7 +73,6 @@ void show_regs(struct pt_regs *regs)
 		}
 	}
 }
-
 
 static void _exception(int signr, struct pt_regs *regs)
 {
@@ -191,7 +190,6 @@ void SoftEmuException(struct pt_regs *regs)
 	panic("Software Emulation Exception");
 }
 
-
 void UnknownException(struct pt_regs *regs)
 {
 #if defined(CONFIG_CMD_KGDB)
@@ -203,15 +201,8 @@ void UnknownException(struct pt_regs *regs)
 	_exception(0, regs);
 }
 
-#if defined(CONFIG_CMD_BEDBUG)
-extern void do_bedbug_breakpoint(struct pt_regs *);
-#endif
-
 void DebugException(struct pt_regs *regs)
 {
 	printf("Debugger trap at @ %lx\n", regs->nip );
 	show_regs(regs);
-#if defined(CONFIG_CMD_BEDBUG)
-	do_bedbug_breakpoint( regs );
-#endif
 }

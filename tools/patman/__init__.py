@@ -1,3 +1,5 @@
-__all__ = ['checkpatch', 'command', 'commit', 'cros_subprocess',
-           'get_maintainer', 'gitutil', 'patchstream', 'project',
-           'series', 'settings', 'terminal', 'test']
+# SPDX-License-Identifier: GPL-2.0+
+
+__all__ = [
+    'commit', 'get_maintainer', 'patchstream', 'series', 'settings',
+]

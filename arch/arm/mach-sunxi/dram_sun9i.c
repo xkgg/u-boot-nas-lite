@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * sun9i dram controller initialisation
  *
@@ -7,20 +8,17 @@
  *
  * (C) Copyright 2016 Theobroma Systems Design und Consulting GmbH
  *                    Philipp Tomsich <philipp.tomsich@theobroma-systems.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <init.h>
+#include <log.h>
 #include <ram.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/dram.h>
 #include <asm/arch/sys_proto.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 #define DRAM_CLK (CONFIG_DRAM_CLK * 1000000)
 
@@ -263,7 +261,6 @@ static void mctl_sys_init(void)
 		reg_val = mctl_read_w(CCM_PLL6_DDR_REG);
 		reg_val |= ((0x1<<24)|(0x1<<30));
 		mctl_write_w(CCM_PLL6_DDR_REG, reg_val);
-
 
 		while(mctl_read_w(CCM_PLL6_DDR_REG) & (0x1<<30));
 	}

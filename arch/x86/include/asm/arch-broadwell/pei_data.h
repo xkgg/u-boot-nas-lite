@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * From Coreboot soc/intel/broadwell/include/soc/pei_data.h
  *
  * Copyright (C) 2014 Google Inc.
- *
- * SPDX-License-Identifier:	BSD-3-Clause
  */
 
 #ifndef ASM_ARCH_PEI_DATA_H
@@ -62,7 +61,6 @@ struct usb3_port_setting {
 	 */
 	uint8_t fixed_eq;
 } __packed;
-
 
 struct pei_data {
 	uint32_t pei_version;

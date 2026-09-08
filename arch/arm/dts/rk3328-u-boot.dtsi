@@ -1,100 +1,166 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2018 Rockchip Electronics Co., Ltd
- *
- * SPDX-License-Identifier:     GPL-2.0+
+ * (C) Copyright 2019 Rockchip Electronics Co., Ltd
  */
+
+#include "rockchip-u-boot.dtsi"
 
 / {
 	aliases {
 		mmc0 = &emmc;
 		mmc1 = &sdmmc;
+		spi0 = &spi0;
 	};
 
 	chosen {
-		u-boot,spl-boot-order = &sdmmc, &emmc;
-		stdout-path = &uart2;
+		u-boot,spl-boot-order = "same-as-spl", &sdmmc, &emmc;
 	};
 
-};
-
-&psci {
-	u-boot,dm-pre-reloc;
-	status = "okay";
+	dmc: dmc {
+		compatible = "rockchip,rk3328-dmc";
+		reg = <0x0 0xff400000 0x0 0x1000
+		       0x0 0xff780000 0x0 0x3000
+		       0x0 0xff100000 0x0 0x1000
+		       0x0 0xff440000 0x0 0x1000
+		       0x0 0xff720000 0x0 0x1000
+		       0x0 0xff798000 0x0 0x1000>;
+		bootph-all;
+	};
 };
 
 &cru {
-	u-boot,dm-pre-reloc;
-};
-
-&crypto {
-	u-boot,dm-pre-reloc;
-};
-
-&grf {
-	u-boot,dm-pre-reloc;
-};
-
-&dmc {
-	u-boot,dm-pre-reloc;
-};
-
-&uart2 {
-	u-boot,dm-pre-reloc;
+	bootph-all;
 };
 
 &emmc {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
+
+	/* mmc to sram can't do dma, prevent aborts transferring TF-A parts */
+	u-boot,spl-fifo-mode;
 };
 
-&sdmmc {
-	u-boot,dm-spl;
+&emmc_bus8 {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&saradc {
-	u-boot,dm-spl;
-	status = "okay";
+&emmc_clk {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&usb20_otg {
-	u-boot,dm-spl;
+&emmc_cmd {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&usb2phy_grf {
-	u-boot,dm-spl;
+&gpio0 {
+	bootph-pre-ram;
 };
 
-&u2phy {
-	u-boot,dm-spl;
+&grf {
+	bootph-all;
 };
 
-&u2phy_otg {
-	u-boot,dm-spl;
+&pcfg_pull_none {
+	bootph-all;
 };
 
-&u2phy_host {
-	u-boot,dm-spl;
+&pcfg_pull_none_8ma {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
-&usb_host0_ehci {
-	u-boot,dm-spl;
+&pcfg_pull_none_12ma {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_up {
+	bootph-all;
+};
+
+&pcfg_pull_up_4ma {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_up_8ma {
+	bootph-pre-ram;
+	bootph-some-ram;
+};
+
+&pcfg_pull_up_12ma {
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
 &pinctrl {
-	u-boot,dm-spl;
+	bootph-all;
+};
+
+&sdmmc {
+	bootph-pre-ram;
+	bootph-some-ram;
+
+	/* mmc to sram can't do dma, prevent aborts transferring TF-A parts */
+	u-boot,spl-fifo-mode;
 };
 
 &sdmmc0_bus4 {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
 &sdmmc0_clk {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
 &sdmmc0_cmd {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
 };
 
 &sdmmc0_dectn {
-	u-boot,dm-spl;
+	bootph-pre-ram;
+	bootph-some-ram;
 };
+
+&sdmmc0m1_pin {
+	bootph-pre-ram;
+};
+
+&spi0 {
+	bootph-some-ram;
+};
+
+&uart2 {
+	bootph-all;
+	clock-frequency = <24000000>;
+};
+
+&uart2m1_xfer {
+	bootph-pre-sram;
+	bootph-pre-ram;
+};
+
+&vop {
+	bootph-some-ram;
+};
+
+&xin24m {
+	bootph-all;
+};
+
+#ifdef CONFIG_ROCKCHIP_SPI_IMAGE
+&binman {
+	simple-bin-spi {
+		mkimage {
+			args = "-n", CONFIG_SYS_SOC, "-T", "rksd";
+			offset = <0x8000>;
+		};
+	};
+};
+#endif

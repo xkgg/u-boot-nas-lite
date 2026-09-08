@@ -1,11 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Marek Vasut <marex@denx.de>
- *
- * SPDX-License-Identifier:    GPL-2.0+
  */
 
-#include <common.h>
 #include <errno.h>
+#include <linux/kernel.h>
+#include <linux/types.h>
 
 /* Board-specific header. */
 #include <qts/pinmux_config.h>

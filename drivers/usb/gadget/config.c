@@ -1,15 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * usb/gadget/config.c -- simplify building config descriptors
  *
  * Copyright (C) 2003 David Brownell
  *
- * SPDX-License-Identifier:	GPL-2.0+
- *
  * Ported to U-Boot by: Thomas Smits <ts.smits@gmail.com> and
  *                      Remy Bohmer <linux@bohmer.net>
  */
 
-#include <common.h>
 #include <asm/unaligned.h>
 #include <linux/errno.h>
 #include <linux/list.h>
@@ -17,7 +15,6 @@
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
-
 
 /**
  * usb_descriptor_fillbuf - fill buffer with descriptors
@@ -52,7 +49,6 @@ usb_descriptor_fillbuf(void *buf, unsigned buflen,
 	}
 	return dest - (u8 *)buf;
 }
-
 
 /**
  * usb_gadget_config_buf - builts a complete configuration descriptor

@@ -1,13 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2017 NXP Semiconductors
- * Copyright (C) 2014 Freescale Semiconductor
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright 2014 Freescale Semiconductor, Inc.
+ * Copyright 2017-2018, 2020-2021, 2025 NXP
  */
-#include <common.h>
+#include <config.h>
+#include <command.h>
+#include <cpu_func.h>
+#include <env.h>
 #include <errno.h>
+#include <image.h>
+#include <log.h>
+#include <malloc.h>
+#include <mapmem.h>
+#include <asm/global_data.h>
 #include <linux/bug.h>
 #include <asm/io.h>
+#include <linux/delay.h>
 #include <linux/libfdt.h>
 #include <net.h>
 #include <fdt_support.h>
@@ -18,8 +26,12 @@
 #include <fsl-mc/fsl_dprc.h>
 #include <fsl-mc/fsl_dpio.h>
 #include <fsl-mc/fsl_dpni.h>
+#include <fsl-mc/fsl_dpsparser.h>
 #include <fsl-mc/fsl_qbman_portal.h>
 #include <fsl-mc/ldpaa_wriop.h>
+#include <net/ldpaa_eth.h>
+#include <asm/arch/cpu.h>
+#include <asm/arch-fsl-layerscape/fsl_icid.h>
 
 #define MC_RAM_BASE_ADDR_ALIGNMENT  (512UL * 1024 * 1024)
 #define MC_RAM_BASE_ADDR_ALIGNMENT_MASK	(~(MC_RAM_BASE_ADDR_ALIGNMENT - 1))
@@ -28,11 +40,24 @@
 #define MC_MEM_SIZE_ENV_VAR	"mcmemsize"
 #define MC_BOOT_TIMEOUT_ENV_VAR	"mcboottimeout"
 #define MC_BOOT_ENV_VAR		"mcinitcmd"
+#define MC_DRAM_BLOCK_DEFAULT_SIZE (512UL * 1024 * 1024)
+
+#define MC_BUFFER_SIZE   (1024 * 1024 * 16)
+#define MAGIC_MC 0x4d430100
+#define MC_FW_ADDR_MASK_LOW 0xE0000000
+#define MC_FW_ADDR_MASK_HIGH 0x1FFFF
+#define MC_STRUCT_BUFFER_OFFSET 0x01000000
+#define MC_OFFSET_DELTA MC_STRUCT_BUFFER_OFFSET
+
+#define LOG_HEADER_FLAG_BUFFER_WRAPAROUND 0x80000000
+#define LAST_BYTE(a) ((a) & ~(LOG_HEADER_FLAG_BUFFER_WRAPAROUND))
 
 DECLARE_GLOBAL_DATA_PTR;
+static int mc_memset_resv_ram;
+static struct mc_version mc_ver_info;
 static int mc_boot_status = -1;
 static int mc_dpl_applied = -1;
-#ifdef CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
+#ifdef CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
 static int mc_aiop_applied = -1;
 #endif
 struct fsl_mc_io *root_mc_io = NULL;
@@ -44,6 +69,10 @@ struct fsl_dpbp_obj *dflt_dpbp = NULL;
 struct fsl_dpio_obj *dflt_dpio = NULL;
 struct fsl_dpni_obj *dflt_dpni = NULL;
 static u64 mc_lazy_dpl_addr;
+static u32 dpsparser_obj_id;
+static u16 dpsparser_handle;
+static char *mc_err_msg_apply_spb[] = MC_ERROR_MSG_APPLY_SPB;
+static bool wait_for_dpl;
 
 #ifdef DEBUG
 void dump_ram_words(const char *title, void *addr)
@@ -87,7 +116,6 @@ void dump_mc_ccsr_regs(struct mc_ccsr_registers __iomem *mc_ccsr_regs)
 
 #endif /* DEBUG */
 
-#ifndef CONFIG_SYS_LS_MC_FW_IN_DDR
 /**
  * Copying MC firmware or DPL image to DDR
  */
@@ -100,6 +128,7 @@ static int mc_copy_image(const char *title,
 	return 0;
 }
 
+#ifndef CONFIG_SYS_LS_MC_FW_IN_DDR
 /**
  * MC firmware FIT image parser checks if the image is in FIT
  * format, verifies integrity of the image and calculates
@@ -112,13 +141,7 @@ int parse_mc_firmware_fit_image(u64 mc_fw_addr,
 				size_t *raw_image_size)
 {
 	int format;
-	void *fit_hdr;
-	int node_offset;
-	const void *data;
-	size_t size;
-	const char *uname = "firmware";
-
-	fit_hdr = (void *)mc_fw_addr;
+	void *fit_hdr = (void *)mc_fw_addr;
 
 	/* Check if Image is in FIT format */
 	format = genimg_get_format(fit_hdr);
@@ -128,31 +151,13 @@ int parse_mc_firmware_fit_image(u64 mc_fw_addr,
 		return -EINVAL;
 	}
 
-	if (!fit_check_format(fit_hdr)) {
+	if (fit_check_format(fit_hdr, IMAGE_SIZE_INVAL)) {
 		printf("fsl-mc: ERR: Bad firmware image (bad FIT header)\n");
 		return -EINVAL;
 	}
 
-	node_offset = fit_image_get_node(fit_hdr, uname);
-
-	if (node_offset < 0) {
-		printf("fsl-mc: ERR: Bad firmware image (missing subimage)\n");
-		return -ENOENT;
-	}
-
-	/* Verify MC firmware image */
-	if (!(fit_image_verify(fit_hdr, node_offset))) {
-		printf("fsl-mc: ERR: Bad firmware image (bad CRC)\n");
-		return -EINVAL;
-	}
-
-	/* Get address and size of raw image */
-	fit_image_get_data(fit_hdr, node_offset, &data, &size);
-
-	*raw_image_addr = data;
-	*raw_image_size = size;
-
-	return 0;
+	return fit_get_data_node(fit_hdr, "firmware", raw_image_addr,
+				 raw_image_size);
 }
 #endif
 
@@ -164,9 +169,12 @@ enum mc_fixup_type {
 };
 
 static int mc_fixup_mac_addr(void *blob, int nodeoffset,
-			     const char *propname, struct eth_device *eth_dev,
+			     const char *propname, struct udevice *eth_dev,
 			     enum mc_fixup_type type)
 {
+	struct eth_pdata *plat = dev_get_plat(eth_dev);
+	unsigned char *enetaddr = plat->enetaddr;
+	int eth_index = dev_seq(eth_dev);
 	int err = 0, len = 0, size, i;
 	unsigned char env_enetaddr[ARP_HLEN];
 	unsigned int enetaddr_32[ARP_HLEN];
@@ -174,23 +182,22 @@ static int mc_fixup_mac_addr(void *blob, int nodeoffset,
 
 	switch (type) {
 	case MC_FIXUP_DPL:
-	/* DPL likes its addresses on 32 * ARP_HLEN bits */
-	for (i = 0; i < ARP_HLEN; i++)
-		enetaddr_32[i] = cpu_to_fdt32(eth_dev->enetaddr[i]);
-	val = enetaddr_32;
-	len = sizeof(enetaddr_32);
-	break;
-
+		/* DPL likes its addresses on 32 * ARP_HLEN bits */
+		for (i = 0; i < ARP_HLEN; i++)
+			enetaddr_32[i] = cpu_to_fdt32(enetaddr[i]);
+		val = enetaddr_32;
+		len = sizeof(enetaddr_32);
+		break;
 	case MC_FIXUP_DPC:
-	val = eth_dev->enetaddr;
-	len = ARP_HLEN;
-	break;
+		val = enetaddr;
+		len = ARP_HLEN;
+		break;
 	}
 
 	/* MAC address property present */
 	if (fdt_get_property(blob, nodeoffset, propname, NULL)) {
 		/* u-boot MAC addr randomly assigned - leave the present one */
-		if (!eth_env_get_enetaddr_by_index("eth", eth_dev->index,
+		if (!eth_env_get_enetaddr_by_index("eth", eth_index,
 						   env_enetaddr))
 			return err;
 	} else {
@@ -240,7 +247,7 @@ const char *dpl_get_connection_endpoint(void *blob, char *endpoint)
 }
 
 static int mc_fixup_dpl_mac_addr(void *blob, int dpmac_id,
-				 struct eth_device *eth_dev)
+				 struct udevice *eth_dev)
 {
 	int objoff = fdt_path_offset(blob, "/objects");
 	int dpmacoff = -1, dpnioff = -1;
@@ -279,8 +286,67 @@ static int mc_fixup_dpl_mac_addr(void *blob, int dpmac_id,
 				 MC_FIXUP_DPL);
 }
 
+void fdt_fixup_mc_ddr(u64 *base, u64 *size)
+{
+	u64 mc_size = mc_get_dram_block_size();
+
+	if (mc_size < MC_DRAM_BLOCK_DEFAULT_SIZE) {
+		*base = mc_get_dram_addr() + mc_size;
+		*size = MC_DRAM_BLOCK_DEFAULT_SIZE - mc_size;
+	}
+}
+
+void fdt_fsl_mc_fixup_iommu_map_entry(void *blob)
+{
+	u32 *prop;
+	u32 iommu_map[4], phandle;
+	int offset;
+	int lenp;
+
+	/* find fsl-mc node */
+	offset = fdt_path_offset(blob, "/soc/fsl-mc");
+	if (offset < 0)
+		offset = fdt_path_offset(blob, "/fsl-mc");
+	if (offset < 0) {
+		printf("%s: fsl-mc: ERR: fsl-mc node not found in DT, err %d\n",
+		       __func__, offset);
+		return;
+	}
+
+	prop = fdt_getprop_w(blob, offset, "iommu-map", &lenp);
+	if (!prop) {
+		debug("%s: fsl-mc: ERR: missing iommu-map in fsl-mc bus node\n",
+		      __func__);
+		return;
+	}
+
+	iommu_map[0] = cpu_to_fdt32(FSL_DPAA2_STREAM_ID_START);
+	iommu_map[1] = *++prop;
+	iommu_map[2] = cpu_to_fdt32(FSL_DPAA2_STREAM_ID_START);
+	iommu_map[3] = cpu_to_fdt32(FSL_DPAA2_STREAM_ID_END -
+		FSL_DPAA2_STREAM_ID_START + 1);
+
+	fdt_setprop_inplace(blob, offset, "iommu-map",
+			    iommu_map, sizeof(iommu_map));
+
+	/* get phandle to MSI controller */
+	prop = (u32 *)fdt_getprop(blob, offset, "msi-parent", 0);
+	if (!prop) {
+		debug("\n%s: ERROR: missing msi-parent\n", __func__);
+		return;
+	}
+	phandle = fdt32_to_cpu(*prop);
+
+	/* also set msi-map property */
+	fdt_appendprop_u32(blob, offset, "msi-map", FSL_DPAA2_STREAM_ID_START);
+	fdt_appendprop_u32(blob, offset, "msi-map", phandle);
+	fdt_appendprop_u32(blob, offset, "msi-map", FSL_DPAA2_STREAM_ID_START);
+	fdt_appendprop_u32(blob, offset, "msi-map", FSL_DPAA2_STREAM_ID_END -
+			   FSL_DPAA2_STREAM_ID_START + 1);
+}
+
 static int mc_fixup_dpc_mac_addr(void *blob, int dpmac_id,
-				 struct eth_device *eth_dev)
+				 struct udevice *eth_dev)
 {
 	int nodeoffset = fdt_path_offset(blob, "/board_info/ports"), noff;
 	int err = 0;
@@ -294,16 +360,15 @@ static int mc_fixup_dpc_mac_addr(void *blob, int dpmac_id,
 	if (noff < 0) {
 		err = fdt_increase_size(blob, 200);
 		if (err) {
-			printf("fdt_increase_size: err=%s\n",
-				fdt_strerror(err));
+			printf("fdt_increase_size: err=%s\n", fdt_strerror(err));
 			return err;
 		}
 
 		noff = fdt_add_subnode(blob, nodeoffset, mac_name);
 		if (noff < 0) {
 			printf("fdt_add_subnode: err=%s\n",
-			       fdt_strerror(err));
-			return err;
+			       fdt_strerror(noff));
+			return noff;
 		}
 
 		/* add default property of fixed link */
@@ -311,7 +376,7 @@ static int mc_fixup_dpc_mac_addr(void *blob, int dpmac_id,
 					    "link_type", link_type_mode);
 		if (err) {
 			printf("fdt_appendprop_string: err=%s\n",
-				fdt_strerror(err));
+			       fdt_strerror(err));
 			return err;
 		}
 	}
@@ -322,37 +387,31 @@ static int mc_fixup_dpc_mac_addr(void *blob, int dpmac_id,
 
 static int mc_fixup_mac_addrs(void *blob, enum mc_fixup_type type)
 {
-	int i, err = 0, ret = 0;
-	char ethname[10];
-	struct eth_device *eth_dev;
+	struct udevice *eth_dev;
+	int err = 0, ret = 0;
+	struct uclass *uc;
+	uint32_t dpmac_id;
 
-	for (i = WRIOP1_DPMAC1; i < NUM_WRIOP_PORTS; i++) {
-		/* port not enabled */
-		if ((wriop_is_enabled_dpmac(i) != 1) ||
-		    (wriop_get_phy_address(i) == -1))
+	uclass_get(UCLASS_ETH, &uc);
+	uclass_foreach_dev(eth_dev, uc) {
+		if (!eth_dev->driver || !eth_dev->driver->name ||
+		    strcmp(eth_dev->driver->name, LDPAA_ETH_DRIVER_NAME))
 			continue;
 
-		sprintf(ethname, "DPMAC%d@%s", i,
-			phy_interface_strings[wriop_get_enet_if(i)]);
-
-		eth_dev = eth_get_dev_by_name(ethname);
-		if (eth_dev == NULL)
-			continue;
-
+		dpmac_id = ldpaa_eth_get_dpmac_id(eth_dev);
 		switch (type) {
 		case MC_FIXUP_DPL:
-			err = mc_fixup_dpl_mac_addr(blob, i, eth_dev);
+			err = mc_fixup_dpl_mac_addr(blob, dpmac_id, eth_dev);
 			break;
 		case MC_FIXUP_DPC:
-			err = mc_fixup_dpc_mac_addr(blob, i, eth_dev);
+			err = mc_fixup_dpc_mac_addr(blob, dpmac_id, eth_dev);
 			break;
 		default:
 			break;
 		}
 
 		if (err)
-			printf("fsl-mc: ERROR fixing mac address for %s\n",
-			       ethname);
+			printf("fsl-mc: ERROR fixing mac address for %s\n", eth_dev->name);
 		ret |= err;
 	}
 
@@ -386,10 +445,23 @@ static int mc_fixup_dpc(u64 dpc_addr)
 
 	/* fixup MAC addresses for dpmac ports */
 	nodeoffset = fdt_path_offset(blob, "/board_info/ports");
-	if (nodeoffset < 0)
-		return 0;
+	if (nodeoffset < 0) {
+		err = fdt_increase_size(blob, 512);
+		if (err) {
+			printf("fdt_increase_size: err=%s\n",
+			       fdt_strerror(err));
+			goto out;
+		}
+		nodeoffset = fdt_path_offset(blob, "/board_info");
+		if (nodeoffset < 0)
+			nodeoffset = fdt_add_subnode(blob, 0, "board_info");
+
+		nodeoffset = fdt_add_subnode(blob, nodeoffset, "ports");
+	}
 
 	err = mc_fixup_mac_addrs(blob, MC_FIXUP_DPC);
+
+out:
 	flush_dcache_range(dpc_addr, dpc_addr + fdt_totalsize(blob));
 
 	return err;
@@ -404,13 +476,13 @@ static int load_mc_dpc(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpc_addr)
 	int dpc_size;
 #endif
 
-#ifdef CONFIG_SYS_LS_MC_DRAM_DPC_OFFSET
-	BUILD_BUG_ON((CONFIG_SYS_LS_MC_DRAM_DPC_OFFSET & 0x3) != 0 ||
-		     CONFIG_SYS_LS_MC_DRAM_DPC_OFFSET > 0xffffffff);
+#ifdef CFG_SYS_LS_MC_DRAM_DPC_OFFSET
+	BUILD_BUG_ON((CFG_SYS_LS_MC_DRAM_DPC_OFFSET & 0x3) != 0 ||
+		     CFG_SYS_LS_MC_DRAM_DPC_OFFSET > 0xffffffff);
 
-	mc_dpc_offset = CONFIG_SYS_LS_MC_DRAM_DPC_OFFSET;
+	mc_dpc_offset = CFG_SYS_LS_MC_DRAM_DPC_OFFSET;
 #else
-#error "CONFIG_SYS_LS_MC_DRAM_DPC_OFFSET not defined"
+#error "CFG_SYS_LS_MC_DRAM_DPC_OFFSET not defined"
 #endif
 
 	/*
@@ -435,7 +507,7 @@ static int load_mc_dpc(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpc_addr)
 	}
 
 	dpc_size = fdt_totalsize(dpc_fdt_hdr);
-	if (dpc_size > CONFIG_SYS_LS_MC_DPC_MAX_LENGTH) {
+	if (dpc_size > CFG_SYS_LS_MC_DPC_MAX_LENGTH) {
 		printf("\nfsl-mc: ERROR: Bad DPC image (too large: %d)\n",
 		       dpc_size);
 		return -EINVAL;
@@ -451,7 +523,6 @@ static int load_mc_dpc(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpc_addr)
 	dump_ram_words("DPC", (void *)(mc_ram_addr + mc_dpc_offset));
 	return 0;
 }
-
 
 static int mc_fixup_dpl(u64 dpl_addr)
 {
@@ -480,13 +551,13 @@ static int load_mc_dpl(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpl_addr)
 	int dpl_size;
 #endif
 
-#ifdef CONFIG_SYS_LS_MC_DRAM_DPL_OFFSET
-	BUILD_BUG_ON((CONFIG_SYS_LS_MC_DRAM_DPL_OFFSET & 0x3) != 0 ||
-		     CONFIG_SYS_LS_MC_DRAM_DPL_OFFSET > 0xffffffff);
+#ifdef CFG_SYS_LS_MC_DRAM_DPL_OFFSET
+	BUILD_BUG_ON((CFG_SYS_LS_MC_DRAM_DPL_OFFSET & 0x3) != 0 ||
+		     CFG_SYS_LS_MC_DRAM_DPL_OFFSET > 0xffffffff);
 
-	mc_dpl_offset = CONFIG_SYS_LS_MC_DRAM_DPL_OFFSET;
+	mc_dpl_offset = CFG_SYS_LS_MC_DRAM_DPL_OFFSET;
 #else
-#error "CONFIG_SYS_LS_MC_DRAM_DPL_OFFSET not defined"
+#error "CFG_SYS_LS_MC_DRAM_DPL_OFFSET not defined"
 #endif
 
 	/*
@@ -507,7 +578,7 @@ static int load_mc_dpl(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpl_addr)
 	}
 
 	dpl_size = fdt_totalsize(dpl_fdt_hdr);
-	if (dpl_size > CONFIG_SYS_LS_MC_DPL_MAX_LENGTH) {
+	if (dpl_size > CFG_SYS_LS_MC_DPL_MAX_LENGTH) {
 		printf("\nfsl-mc: ERROR: Bad DPL image (too large: %d)\n",
 		       dpl_size);
 		return -EINVAL;
@@ -528,26 +599,26 @@ static int load_mc_dpl(u64 mc_ram_addr, size_t mc_ram_size, u64 mc_dpl_addr)
  */
 static unsigned long get_mc_boot_timeout_ms(void)
 {
-	unsigned long timeout_ms = CONFIG_SYS_LS_MC_BOOT_TIMEOUT_MS;
+	unsigned long timeout_ms = CFG_SYS_LS_MC_BOOT_TIMEOUT_MS;
 
 	char *timeout_ms_env_var = env_get(MC_BOOT_TIMEOUT_ENV_VAR);
 
 	if (timeout_ms_env_var) {
-		timeout_ms = simple_strtoul(timeout_ms_env_var, NULL, 10);
+		timeout_ms = dectoul(timeout_ms_env_var, NULL);
 		if (timeout_ms == 0) {
 			printf("fsl-mc: WARNING: Invalid value for \'"
 			       MC_BOOT_TIMEOUT_ENV_VAR
 			       "\' environment variable: %lu\n",
 			       timeout_ms);
 
-			timeout_ms = CONFIG_SYS_LS_MC_BOOT_TIMEOUT_MS;
+			timeout_ms = CFG_SYS_LS_MC_BOOT_TIMEOUT_MS;
 		}
 	}
 
 	return timeout_ms;
 }
 
-#ifdef CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
+#ifdef CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
 
 __weak bool soc_has_aiop(void)
 {
@@ -570,12 +641,12 @@ static int load_mc_aiop_img(u64 aiop_fw_addr)
 
 #ifdef CONFIG_SYS_LS_MC_DPC_IN_DDR
 	printf("MC AIOP is preloaded to %#llx\n", mc_ram_addr +
-	       CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET);
+	       CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET);
 #else
 	aiop_img = (void *)aiop_fw_addr;
 	mc_copy_image("MC AIOP image",
-		      (u64)aiop_img, CONFIG_SYS_LS_MC_AIOP_IMG_MAX_LENGTH,
-		      mc_ram_addr + CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET);
+		      (u64)aiop_img, CFG_SYS_LS_MC_AIOP_IMG_MAX_LENGTH,
+		      mc_ram_addr + CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET);
 #endif
 	mc_aiop_applied = 0;
 
@@ -583,7 +654,7 @@ static int load_mc_aiop_img(u64 aiop_fw_addr)
 }
 #endif
 
-static int wait_for_mc(bool booting_mc, u32 *final_reg_gsr)
+static int wait_for_mc(u32 *final_reg_gsr)
 {
 	u32 reg_gsr;
 	u32 mc_fw_boot_status;
@@ -624,7 +695,6 @@ static int wait_for_mc(bool booting_mc, u32 *final_reg_gsr)
 		printf("SUCCESS\n");
 	}
 
-
 	*final_reg_gsr = reg_gsr;
 	return 0;
 }
@@ -641,17 +711,23 @@ int mc_init(u64 mc_fw_addr, u64 mc_dpc_addr)
 	const void *raw_image_addr;
 	size_t raw_image_size = 0;
 #endif
-	struct mc_version mc_ver_info;
 	u8 mc_ram_num_256mb_blocks;
 	size_t mc_ram_size = mc_get_dram_block_size();
 
 	mc_ram_num_256mb_blocks = mc_ram_size / MC_RAM_SIZE_ALIGNMENT;
-	if (mc_ram_num_256mb_blocks < 1 || mc_ram_num_256mb_blocks > 0xff) {
+
+	if (mc_ram_num_256mb_blocks >= 0xff) {
 		error = -EINVAL;
 		printf("fsl-mc: ERROR: invalid MC private RAM size (%lu)\n",
 		       mc_ram_size);
 		goto out;
 	}
+
+	/*
+	 * To support 128 MB DDR Size for MC
+	 */
+	if (mc_ram_num_256mb_blocks == 0)
+		mc_ram_num_256mb_blocks = 0xFF;
 
 	/*
 	 * Management Complex cores should be held at reset out of POR.
@@ -693,8 +769,14 @@ int mc_init(u64 mc_fw_addr, u64 mc_dpc_addr)
 	/*
 	 * Tell MC what is the address range of the DRAM block assigned to it:
 	 */
-	reg_mcfbalr = (u32)mc_ram_addr |
-		      (mc_ram_num_256mb_blocks - 1);
+	if (mc_ram_num_256mb_blocks < 0xFF) {
+		reg_mcfbalr = (u32)mc_ram_addr |
+				(mc_ram_num_256mb_blocks - 1);
+	} else {
+		reg_mcfbalr = (u32)mc_ram_addr |
+				(mc_ram_num_256mb_blocks);
+	}
+
 	out_le32(&mc_ccsr_regs->reg_mcfbalr, reg_mcfbalr);
 	out_le32(&mc_ccsr_regs->reg_mcfbahr,
 		 (u32)(mc_ram_addr >> 32));
@@ -711,7 +793,7 @@ int mc_init(u64 mc_fw_addr, u64 mc_dpc_addr)
 	 * Deassert reset and release MC core 0 to run
 	 */
 	out_le32(&mc_ccsr_regs->reg_gcr1, GCR1_P1_DE_RST | GCR1_M_ALL_DE_RST);
-	error = wait_for_mc(true, &reg_gsr);
+	error = wait_for_mc(&reg_gsr);
 	if (error != 0)
 		goto out;
 
@@ -725,9 +807,9 @@ int mc_init(u64 mc_fw_addr, u64 mc_dpc_addr)
 	 * Initialize the global default MC portal
 	 * And check that the MC firmware is responding portal commands:
 	 */
-	root_mc_io = (struct fsl_mc_io *)malloc(sizeof(struct fsl_mc_io));
+	root_mc_io = calloc(sizeof(struct fsl_mc_io), 1);
 	if (!root_mc_io) {
-		printf(" No memory: malloc() failed\n");
+		printf(" No memory: calloc() failed\n");
 		return -ENOMEM;
 	}
 
@@ -774,13 +856,20 @@ int mc_apply_dpl(u64 mc_dpl_addr)
 	 * Tell the MC to deploy the DPL:
 	 */
 	out_le32(&mc_ccsr_regs->reg_gsr, 0x0);
-	printf("fsl-mc: Deploying data path layout ... ");
-	error = wait_for_mc(false, &reg_gsr);
 
-	if (!error)
-		mc_dpl_applied = 0;
+	/* Wait for the MC firmware to finish processing the DPL */
+	if (wait_for_dpl) {
+		printf("fsl-mc: Deploying data path layout ... ");
+		error = wait_for_mc(&reg_gsr);
+		if (error)
+			return error;
+	} else {
+		printf("fsl-mc: Started the DPL deploy process\n");
+	}
 
-	return error;
+	mc_dpl_applied = 0;
+
+	return 0;
 }
 
 int get_mc_boot_status(void)
@@ -788,7 +877,7 @@ int get_mc_boot_status(void)
 	return mc_boot_status;
 }
 
-#ifdef CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
+#ifdef CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
 int get_aiop_apply_status(void)
 {
 	return mc_aiop_applied;
@@ -800,12 +889,29 @@ int get_dpl_apply_status(void)
 	return mc_dpl_applied;
 }
 
-/**
+int is_lazy_dpl_addr_valid(void)
+{
+	return !!mc_lazy_dpl_addr;
+}
+
+/*
  * Return the MC address of private DRAM block.
+ * As per MC design document, MC initial base address
+ * should be least significant 512MB address of MC private
+ * memory, i.e. address should point to end address masked
+ * with 512MB offset in private DRAM block.
  */
 u64 mc_get_dram_addr(void)
 {
-	return gd->arch.resv_ram;
+	size_t mc_ram_size = mc_get_dram_block_size();
+
+	if (!mc_memset_resv_ram || (get_mc_boot_status() < 0)) {
+		mc_memset_resv_ram = 1;
+		memset((void *)gd->arch.resv_ram, 0, mc_ram_size);
+	}
+
+	return (gd->arch.resv_ram + mc_ram_size - 1) &
+		MC_RAM_BASE_ADDR_ALIGNMENT_MASK;
 }
 
 /**
@@ -813,55 +919,165 @@ u64 mc_get_dram_addr(void)
  */
 unsigned long mc_get_dram_block_size(void)
 {
-	unsigned long dram_block_size = CONFIG_SYS_LS_MC_DRAM_BLOCK_MIN_SIZE;
+	unsigned long dram_block_size = CFG_SYS_LS_MC_DRAM_BLOCK_MIN_SIZE;
 
 	char *dram_block_size_env_var = env_get(MC_MEM_SIZE_ENV_VAR);
 
 	if (dram_block_size_env_var) {
-		dram_block_size = simple_strtoul(dram_block_size_env_var, NULL,
-						 10);
+		dram_block_size = hextoul(dram_block_size_env_var, NULL);
 
-		if (dram_block_size < CONFIG_SYS_LS_MC_DRAM_BLOCK_MIN_SIZE) {
+		if (dram_block_size < CFG_SYS_LS_MC_DRAM_BLOCK_MIN_SIZE) {
 			printf("fsl-mc: WARNING: Invalid value for \'"
 			       MC_MEM_SIZE_ENV_VAR
 			       "\' environment variable: %lu\n",
 			       dram_block_size);
 
-			dram_block_size = CONFIG_SYS_LS_MC_DRAM_BLOCK_MIN_SIZE;
+			dram_block_size = MC_DRAM_BLOCK_DEFAULT_SIZE;
 		}
 	}
 
 	return dram_block_size;
 }
 
-int fsl_mc_ldpaa_init(bd_t *bis)
+/**
+ * Populate the device tree with MC reserved memory ranges.
+ */
+void fdt_reserve_mc_mem(void *blob, u32 mc_icid)
+{
+	u32 phandle, mc_ph;
+	int noff, ret, i;
+	char mem_name[16];
+	struct fdt_memory mc_mem_ranges[] = {
+		{
+			.start = 0,
+			.end = 0
+		},
+		{
+			.start = CFG_SYS_FSL_MC_BASE,
+			.end = CFG_SYS_FSL_MC_BASE + CFG_SYS_FSL_MC_SIZE - 1
+		},
+		{
+			.start = CFG_SYS_FSL_NI_BASE,
+			.end = CFG_SYS_FSL_NI_BASE + CFG_SYS_FSL_NI_SIZE - 1
+		},
+		{
+			.start = CFG_SYS_FSL_QBMAN_BASE,
+			.end = CFG_SYS_FSL_QBMAN_BASE +
+					CFG_SYS_FSL_QBMAN_SIZE - 1
+		},
+		{
+			.start = CFG_SYS_FSL_PEBUF_BASE,
+			.end = CFG_SYS_FSL_PEBUF_BASE +
+					CFG_SYS_FSL_PEBUF_SIZE - 1
+		},
+		{
+			.start = CFG_SYS_FSL_CCSR_BASE,
+			.end = CFG_SYS_FSL_CCSR_BASE + CFG_SYS_FSL_CCSR_SIZE - 1
+		}
+	};
+
+	mc_mem_ranges[0].start = gd->arch.resv_ram;
+	mc_mem_ranges[0].end = mc_mem_ranges[0].start +
+				mc_get_dram_block_size() - 1;
+
+	for (i = 0; i < ARRAY_SIZE(mc_mem_ranges); i++) {
+		noff = fdt_node_offset_by_compatible(blob, -1, "fsl,qoriq-mc");
+		if (noff < 0) {
+			printf("WARN: failed to get MC node: %d\n", noff);
+			return;
+		}
+		mc_ph = fdt_get_phandle(blob, noff);
+		if (!mc_ph) {
+			mc_ph = fdt_create_phandle(blob, noff);
+			if (!mc_ph) {
+				printf("WARN: failed to get MC node phandle\n");
+				return;
+			}
+		}
+
+		sprintf(mem_name, "mc-mem%d", i);
+		ret = fdtdec_add_reserved_memory(blob, mem_name,
+						 &mc_mem_ranges[i], NULL, 0,
+						 &phandle, 0);
+		if (ret < 0) {
+			printf("ERROR: failed to reserve MC memory: %d\n", ret);
+			return;
+		}
+
+		noff = fdt_node_offset_by_phandle(blob, phandle);
+		if (noff < 0) {
+			printf("ERROR: failed get resvmem node offset: %d\n",
+			       noff);
+			return;
+		}
+		ret = fdt_setprop_u32(blob, noff, "iommu-addresses", mc_ph);
+		if (ret < 0) {
+			printf("ERROR: failed to set 'iommu-addresses': %d\n",
+			       ret);
+			return;
+		}
+		ret = fdt_appendprop_u64(blob, noff, "iommu-addresses",
+					 mc_mem_ranges[i].start);
+		if (ret < 0) {
+			printf("ERROR: failed to set 'iommu-addresses': %d\n",
+			       ret);
+			return;
+		}
+		ret = fdt_appendprop_u64(blob, noff, "iommu-addresses",
+					 mc_mem_ranges[i].end -
+						mc_mem_ranges[i].start + 1);
+		if (ret < 0) {
+			printf("ERROR: failed to set 'iommu-addresses': %d\n",
+			       ret);
+			return;
+		}
+
+		noff = fdt_node_offset_by_phandle(blob, mc_ph);
+		if (noff < 0) {
+			printf("ERROR: failed get MC node offset: %d\n", noff);
+			return;
+		}
+		ret = fdt_appendprop_u32(blob, noff, "memory-region", phandle);
+		if (ret < 0) {
+			printf("ERROR: failed to set 'memory-region': %d\n",
+			       ret);
+		}
+	}
+
+	fdt_set_iommu_prop(blob, noff, fdt_get_smmu_phandle(blob), &mc_icid, 1);
+}
+
+int fsl_mc_ldpaa_init(struct bd_info *bis)
 {
 	int i;
 
 	for (i = WRIOP1_DPMAC1; i < NUM_WRIOP_PORTS; i++)
-		if ((wriop_is_enabled_dpmac(i) == 1) &&
-		    (wriop_get_phy_address(i) != -1))
+		if (wriop_is_enabled_dpmac(i) == 1)
 			ldpaa_eth_init(i, wriop_get_enet_if(i));
 	return 0;
 }
 
 static int dprc_version_check(struct fsl_mc_io *mc_io, uint16_t handle)
 {
-	struct dprc_attributes attr;
 	int error;
+	uint16_t major_ver, minor_ver;
 
-	memset(&attr, 0, sizeof(struct dprc_attributes));
-	error = dprc_get_attributes(mc_io, MC_CMD_NO_FLAGS, handle, &attr);
-	if (error == 0) {
-		if ((attr.version.major != DPRC_VER_MAJOR) ||
-		    (attr.version.minor != DPRC_VER_MINOR)) {
-			printf("DPRC version mismatch found %u.%u,",
-			       attr.version.major,
-			       attr.version.minor);
-			printf("supported version is %u.%u\n",
-			       DPRC_VER_MAJOR, DPRC_VER_MINOR);
-		}
+	error = dprc_get_api_version(mc_io, 0,
+				     &major_ver,
+				     &minor_ver);
+	if (error < 0) {
+		printf("dprc_get_api_version() failed: %d\n", error);
+		return error;
 	}
+
+	if (major_ver < DPRC_VER_MAJOR || (major_ver == DPRC_VER_MAJOR &&
+					   minor_ver < DPRC_VER_MINOR)) {
+		printf("DPRC version mismatch found %u.%u,",
+		       major_ver, minor_ver);
+		printf("supported version is %u.%u\n",
+		       DPRC_VER_MAJOR, DPRC_VER_MINOR);
+	}
+
 	return error;
 }
 
@@ -871,23 +1087,50 @@ static int dpio_init(void)
 	struct dpio_attr attr;
 	struct dpio_cfg dpio_cfg;
 	int err = 0;
+	uint16_t major_ver, minor_ver;
 
-	dflt_dpio = (struct fsl_dpio_obj *)malloc(sizeof(struct fsl_dpio_obj));
+	dflt_dpio = calloc(sizeof(struct fsl_dpio_obj), 1);
 	if (!dflt_dpio) {
-		printf("No memory: malloc() failed\n");
+		printf("No memory: calloc() failed\n");
 		err = -ENOMEM;
-		goto err_malloc;
+		goto err_calloc;
 	}
-
 	dpio_cfg.channel_mode = DPIO_LOCAL_CHANNEL;
 	dpio_cfg.num_priorities = 8;
 
-	err = dpio_create(dflt_mc_io, MC_CMD_NO_FLAGS, &dpio_cfg,
-			  &dflt_dpio->dpio_handle);
+	err = dpio_create(dflt_mc_io,
+			  dflt_dprc_handle,
+			  MC_CMD_NO_FLAGS,
+			  &dpio_cfg,
+			  &dflt_dpio->dpio_id);
 	if (err < 0) {
 		printf("dpio_create() failed: %d\n", err);
 		err = -ENODEV;
 		goto err_create;
+	}
+
+	err = dpio_get_api_version(dflt_mc_io, 0,
+				   &major_ver,
+				   &minor_ver);
+	if (err < 0) {
+		printf("dpio_get_api_version() failed: %d\n", err);
+		goto err_get_api_ver;
+	}
+
+	if (major_ver < DPIO_VER_MAJOR || (major_ver == DPIO_VER_MAJOR &&
+					   minor_ver < DPIO_VER_MINOR)) {
+		printf("DPRC version mismatch found %u.%u,",
+		       major_ver,
+		       minor_ver);
+	}
+
+	err = dpio_open(dflt_mc_io,
+			MC_CMD_NO_FLAGS,
+			dflt_dpio->dpio_id,
+			&dflt_dpio->dpio_handle);
+	if (err) {
+		printf("dpio_open() failed\n");
+		goto err_open;
 	}
 
 	memset(&attr, 0, sizeof(struct dpio_attr));
@@ -898,17 +1141,13 @@ static int dpio_init(void)
 		goto err_get_attr;
 	}
 
-	if ((attr.version.major != DPIO_VER_MAJOR) ||
-	    (attr.version.minor != DPIO_VER_MINOR)) {
-		printf("DPIO version mismatch found %u.%u,",
-		       attr.version.major, attr.version.minor);
-		printf("supported version is %u.%u\n",
-		       DPIO_VER_MAJOR, DPIO_VER_MINOR);
+	if (dflt_dpio->dpio_id != attr.id) {
+		printf("dnpi object id and attribute id are not same\n");
+		goto err_attr_not_same;
 	}
 
-	dflt_dpio->dpio_id = attr.id;
 #ifdef DEBUG
-	printf("Init: DPIO id=0x%d\n", dflt_dpio->dpio_id);
+	printf("Init: DPIO.%d\n", dflt_dpio->dpio_id);
 #endif
 	err = dpio_enable(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
 	if (err < 0) {
@@ -937,11 +1176,18 @@ err_get_swp_init:
 	dpio_disable(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
 err_get_enable:
 err_get_attr:
+err_attr_not_same:
 	dpio_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
-	dpio_destroy(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
+err_open:
+err_get_api_ver:
+	dpio_destroy(dflt_mc_io,
+		     dflt_dprc_handle,
+		     MC_CMD_NO_FLAGS,
+		     dflt_dpio->dpio_id);
 err_create:
 	free(dflt_dpio);
-err_malloc:
+	dflt_dpio = NULL;
+err_calloc:
 	return err;
 }
 
@@ -949,24 +1195,36 @@ static int dpio_exit(void)
 {
 	int err;
 
+	if (!dflt_dpio)
+		return -ENODEV;
+
 	err = dpio_disable(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
 	if (err < 0) {
 		printf("dpio_disable() failed: %d\n", err);
 		goto err;
 	}
 
-	err = dpio_destroy(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
+	err = dpio_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpio->dpio_handle);
+	if (err < 0) {
+		printf("dpio_close() failed: %d\n", err);
+		goto err;
+	}
+
+	err = dpio_destroy(dflt_mc_io,
+			   dflt_dprc_handle,
+			   MC_CMD_NO_FLAGS,
+			   dflt_dpio->dpio_id);
 	if (err < 0) {
 		printf("dpio_destroy() failed: %d\n", err);
 		goto err;
 	}
 
 #ifdef DEBUG
-	printf("Exit: DPIO id=0x%d\n", dflt_dpio->dpio_id);
+	printf("Exit: DPIO.%d\n", dflt_dpio->dpio_id);
 #endif
 
-	if (dflt_dpio)
-		free(dflt_dpio);
+	free(dflt_dpio);
+	dflt_dpio = NULL;
 
 	return 0;
 err:
@@ -1014,24 +1272,24 @@ static int dprc_init(void)
 	cfg.icid = DPRC_GET_ICID_FROM_POOL;
 	cfg.portal_id = DPRC_GET_PORTAL_ID_FROM_POOL;
 	err = dprc_create_container(root_mc_io, MC_CMD_NO_FLAGS,
-			root_dprc_handle,
-			&cfg,
-			&child_dprc_id,
-			&mc_portal_offset);
+				    root_dprc_handle, &cfg,
+				    &child_dprc_id,
+				    &mc_portal_offset);
 	if (err < 0) {
 		printf("dprc_create_container() failed: %d\n", err);
 		goto err_create;
 	}
 
-	dflt_mc_io = (struct fsl_mc_io *)malloc(sizeof(struct fsl_mc_io));
+	dflt_mc_io = calloc(sizeof(struct fsl_mc_io), 1);
 	if (!dflt_mc_io) {
 		err  = -ENOMEM;
-		printf(" No memory: malloc() failed\n");
-		goto err_malloc;
+		printf(" No memory: calloc() failed\n");
+		goto err_calloc;
 	}
 
 	child_portal_id = MC_PORTAL_OFFSET_TO_PORTAL_ID(mc_portal_offset);
 	dflt_mc_io->mmio_regs = SOC_MC_PORTAL_ADDR(child_portal_id);
+
 #ifdef DEBUG
 	printf("MC portal of child DPRC container: %d, physical addr %p)\n",
 	       child_dprc_id, dflt_mc_io->mmio_regs);
@@ -1052,7 +1310,7 @@ static int dprc_init(void)
 	return 0;
 err_child_open:
 	free(dflt_mc_io);
-err_malloc:
+err_calloc:
 	dprc_destroy_container(root_mc_io, MC_CMD_NO_FLAGS,
 			       root_dprc_handle, child_dprc_id);
 err_create:
@@ -1102,23 +1360,52 @@ static int dpbp_init(void)
 	int err;
 	struct dpbp_attr dpbp_attr;
 	struct dpbp_cfg dpbp_cfg;
+	uint16_t major_ver, minor_ver;
 
-	dflt_dpbp = (struct fsl_dpbp_obj *)malloc(sizeof(struct fsl_dpbp_obj));
+	dflt_dpbp = calloc(sizeof(struct fsl_dpbp_obj), 1);
 	if (!dflt_dpbp) {
-		printf("No memory: malloc() failed\n");
+		printf("No memory: calloc() failed\n");
 		err = -ENOMEM;
-		goto err_malloc;
+		goto err_calloc;
 	}
 
 	dpbp_cfg.options = 512;
 
-	err = dpbp_create(dflt_mc_io, MC_CMD_NO_FLAGS, &dpbp_cfg,
-			  &dflt_dpbp->dpbp_handle);
+	err = dpbp_create(dflt_mc_io,
+			  dflt_dprc_handle,
+			  MC_CMD_NO_FLAGS,
+			  &dpbp_cfg,
+			  &dflt_dpbp->dpbp_id);
 
 	if (err < 0) {
 		err = -ENODEV;
 		printf("dpbp_create() failed: %d\n", err);
 		goto err_create;
+	}
+
+	err = dpbp_get_api_version(dflt_mc_io, 0,
+				   &major_ver,
+				   &minor_ver);
+	if (err < 0) {
+		printf("dpbp_get_api_version() failed: %d\n", err);
+		goto err_get_api_ver;
+	}
+
+	if (major_ver < DPBP_VER_MAJOR || (major_ver == DPBP_VER_MAJOR &&
+					   minor_ver < DPBP_VER_MINOR)) {
+		printf("DPBP version mismatch found %u.%u,",
+		       major_ver, minor_ver);
+		printf("supported version is %u.%u\n",
+		       DPBP_VER_MAJOR, DPBP_VER_MINOR);
+	}
+
+	err = dpbp_open(dflt_mc_io,
+			MC_CMD_NO_FLAGS,
+			dflt_dpbp->dpbp_id,
+			&dflt_dpbp->dpbp_handle);
+	if (err) {
+		printf("dpbp_open() failed\n");
+		goto err_open;
 	}
 
 	memset(&dpbp_attr, 0, sizeof(struct dpbp_attr));
@@ -1130,17 +1417,13 @@ static int dpbp_init(void)
 		goto err_get_attr;
 	}
 
-	if ((dpbp_attr.version.major != DPBP_VER_MAJOR) ||
-	    (dpbp_attr.version.minor != DPBP_VER_MINOR)) {
-		printf("DPBP version mismatch found %u.%u,",
-		       dpbp_attr.version.major, dpbp_attr.version.minor);
-		printf("supported version is %u.%u\n",
-		       DPBP_VER_MAJOR, DPBP_VER_MINOR);
+	if (dflt_dpbp->dpbp_id != dpbp_attr.id) {
+		printf("dpbp object id and attribute id are not same\n");
+		goto err_attr_not_same;
 	}
 
-	dflt_dpbp->dpbp_attr.id = dpbp_attr.id;
 #ifdef DEBUG
-	printf("Init: DPBP id=0x%d\n", dflt_dpbp->dpbp_attr.id);
+	printf("Init: DPBP.%d\n", dflt_dpbp->dpbp_attr.id);
 #endif
 
 	err = dpbp_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpbp->dpbp_handle);
@@ -1151,13 +1434,20 @@ static int dpbp_init(void)
 
 	return 0;
 
-err_close:
-	free(dflt_dpbp);
 err_get_attr:
+err_attr_not_same:
 	dpbp_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpbp->dpbp_handle);
-	dpbp_destroy(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpbp->dpbp_handle);
+	dpbp_destroy(dflt_mc_io,
+		     dflt_dprc_handle,
+		     MC_CMD_NO_FLAGS,
+		     dflt_dpbp->dpbp_id);
+err_get_api_ver:
+err_close:
+err_open:
 err_create:
-err_malloc:
+	free(dflt_dpbp);
+	dflt_dpbp = NULL;
+err_calloc:
 	return err;
 }
 
@@ -1165,26 +1455,22 @@ static int dpbp_exit(void)
 {
 	int err;
 
-	err = dpbp_open(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpbp->dpbp_attr.id,
-			&dflt_dpbp->dpbp_handle);
-	if (err < 0) {
-		printf("dpbp_open() failed: %d\n", err);
-		goto err;
-	}
+	if (!dflt_dpbp)
+		return -ENODEV;
 
-	err = dpbp_destroy(dflt_mc_io, MC_CMD_NO_FLAGS,
-			   dflt_dpbp->dpbp_handle);
+	err = dpbp_destroy(dflt_mc_io, dflt_dprc_handle, MC_CMD_NO_FLAGS,
+			   dflt_dpbp->dpbp_id);
 	if (err < 0) {
 		printf("dpbp_destroy() failed: %d\n", err);
 		goto err;
 	}
 
 #ifdef DEBUG
-	printf("Exit: DPBP id=0x%d\n", dflt_dpbp->dpbp_attr.id);
+	printf("Exit: DPBP.%d\n", dflt_dpbp->dpbp_attr.id);
 #endif
 
-	if (dflt_dpbp)
-		free(dflt_dpbp);
+	free(dflt_dpbp);
+	dflt_dpbp = NULL;
 	return 0;
 
 err:
@@ -1193,63 +1479,56 @@ err:
 
 static int dpni_init(void)
 {
+	struct dpni_cfg dpni_cfg = {0};
+	uint16_t major_ver, minor_ver;
 	int err;
-	struct dpni_attr dpni_attr;
-	uint8_t	ext_cfg_buf[256] = {0};
-	struct dpni_extended_cfg dpni_extended_cfg;
-	struct dpni_cfg dpni_cfg;
 
-	dflt_dpni = (struct fsl_dpni_obj *)malloc(sizeof(struct fsl_dpni_obj));
+	dflt_dpni = calloc(sizeof(struct fsl_dpni_obj), 1);
 	if (!dflt_dpni) {
-		printf("No memory: malloc() failed\n");
+		printf("No memory: calloc() failed\n");
 		err = -ENOMEM;
-		goto err_malloc;
+		goto err_calloc;
 	}
 
-	memset(&dpni_extended_cfg, 0, sizeof(dpni_extended_cfg));
-	err = dpni_prepare_extended_cfg(&dpni_extended_cfg, &ext_cfg_buf[0]);
+	err = dpni_create(dflt_mc_io,
+			  dflt_dprc_handle,
+			  MC_CMD_NO_FLAGS,
+			  &dpni_cfg,
+			  &dflt_dpni->dpni_id);
 	if (err < 0) {
 		err = -ENODEV;
-		printf("dpni_prepare_extended_cfg() failed: %d\n", err);
-		goto err_prepare_extended_cfg;
-	}
-
-	memset(&dpni_cfg, 0, sizeof(dpni_cfg));
-	dpni_cfg.adv.options = DPNI_OPT_UNICAST_FILTER |
-			       DPNI_OPT_MULTICAST_FILTER;
-
-	dpni_cfg.adv.ext_cfg_iova = (uint64_t)&ext_cfg_buf[0];
-	err = dpni_create(dflt_mc_io, MC_CMD_NO_FLAGS, &dpni_cfg,
-			  &dflt_dpni->dpni_handle);
-
-	if (err < 0) {
-		err = -ENODEV;
-		printf("dpni_create() failed: %d\n", err);
+		printf("dpni create() failed: %d\n", err);
 		goto err_create;
 	}
 
-	memset(&dpni_attr, 0, sizeof(struct dpni_attr));
-	err = dpni_get_attributes(dflt_mc_io, MC_CMD_NO_FLAGS,
-				  dflt_dpni->dpni_handle,
-				  &dpni_attr);
+	err = dpni_get_api_version(dflt_mc_io, 0,
+				   &major_ver,
+				   &minor_ver);
 	if (err < 0) {
-		printf("dpni_get_attributes() failed: %d\n", err);
-		goto err_get_attr;
+		printf("dpni_get_api_version() failed: %d\n", err);
+		goto err_get_version;
 	}
 
-	if ((dpni_attr.version.major != DPNI_VER_MAJOR) ||
-	    (dpni_attr.version.minor != DPNI_VER_MINOR)) {
+	if (major_ver < DPNI_VER_MAJOR || (major_ver == DPNI_VER_MAJOR &&
+					   minor_ver < DPNI_VER_MINOR)) {
 		printf("DPNI version mismatch found %u.%u,",
-		       dpni_attr.version.major, dpni_attr.version.minor);
+		       major_ver, minor_ver);
 		printf("supported version is %u.%u\n",
 		       DPNI_VER_MAJOR, DPNI_VER_MINOR);
 	}
 
-	dflt_dpni->dpni_id = dpni_attr.id;
-#ifdef DEBUG
-	printf("Init: DPNI id=0x%d\n", dflt_dpni->dpni_id);
-#endif
+	err = dpni_open(dflt_mc_io,
+			MC_CMD_NO_FLAGS,
+			dflt_dpni->dpni_id,
+			&dflt_dpni->dpni_handle);
+	if (err) {
+		printf("dpni_open() failed\n");
+		goto err_open;
+	}
 
+#ifdef DEBUG
+	printf("Init: DPNI.%d\n", dflt_dpni->dpni_id);
+#endif
 	err = dpni_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpni->dpni_handle);
 	if (err < 0) {
 		printf("dpni_close() failed: %d\n", err);
@@ -1259,13 +1538,17 @@ static int dpni_init(void)
 	return 0;
 
 err_close:
-err_get_attr:
 	dpni_close(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpni->dpni_handle);
-	dpni_destroy(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpni->dpni_handle);
+err_open:
+err_get_version:
+	dpni_destroy(dflt_mc_io,
+		     dflt_dprc_handle,
+		     MC_CMD_NO_FLAGS,
+		     dflt_dpni->dpni_id);
 err_create:
-err_prepare_extended_cfg:
 	free(dflt_dpni);
-err_malloc:
+	dflt_dpni = NULL;
+err_calloc:
 	return err;
 }
 
@@ -1273,29 +1556,189 @@ static int dpni_exit(void)
 {
 	int err;
 
-	err = dpni_open(dflt_mc_io, MC_CMD_NO_FLAGS, dflt_dpni->dpni_id,
-			&dflt_dpni->dpni_handle);
-	if (err < 0) {
-		printf("dpni_open() failed: %d\n", err);
-		goto err;
-	}
+	if (!dflt_dpni)
+		return -ENODEV;
 
-	err = dpni_destroy(dflt_mc_io, MC_CMD_NO_FLAGS,
-			   dflt_dpni->dpni_handle);
+	err = dpni_destroy(dflt_mc_io, dflt_dprc_handle, MC_CMD_NO_FLAGS,
+			   dflt_dpni->dpni_id);
 	if (err < 0) {
 		printf("dpni_destroy() failed: %d\n", err);
 		goto err;
 	}
 
 #ifdef DEBUG
-	printf("Exit: DPNI id=0x%d\n", dflt_dpni->dpni_id);
+	printf("Exit: DPNI.%d\n", dflt_dpni->dpni_id);
 #endif
 
-	if (dflt_dpni)
-		free(dflt_dpni);
+	free(dflt_dpni);
+	dflt_dpni = NULL;
 	return 0;
 
 err:
+	return err;
+}
+
+static bool is_dpsparser_supported(void)
+{
+	/* dpsparser support was first introduced in MC version: 10.12.0 */
+	if (mc_ver_info.major < 10)
+		return false;
+	if (mc_ver_info.major == 10)
+		return (mc_ver_info.minor >= 12);
+	return true;
+}
+
+static int dpsparser_version_check(struct fsl_mc_io *mc_io)
+{
+	int error;
+	u16 major_ver, minor_ver;
+
+	if (!is_dpsparser_supported())
+		return 0;
+
+	error = dpsparser_get_api_version(mc_io, 0,
+					  &major_ver,
+					  &minor_ver);
+	if (error < 0) {
+		printf("dpsparser_get_api_version() failed: %d\n", error);
+		return error;
+	}
+
+	if (major_ver < DPSPARSER_VER_MAJOR || (major_ver ==
+	    DPSPARSER_VER_MAJOR && minor_ver < DPSPARSER_VER_MINOR)) {
+		printf("DPSPARSER version mismatch found %u.%u,",
+		       major_ver, minor_ver);
+		printf("supported version is %u.%u\n",
+		       DPSPARSER_VER_MAJOR, DPSPARSER_VER_MINOR);
+	}
+
+	return error;
+}
+
+static int dpsparser_init(void)
+{
+	int err = 0;
+
+	if (!is_dpsparser_supported())
+		return 0;
+
+	err = dpsparser_create(dflt_mc_io,
+			       dflt_dprc_handle,
+			       MC_CMD_NO_FLAGS,
+			       &dpsparser_obj_id);
+	if (err)
+		printf("dpsparser_create() failed\n");
+
+	err = dpsparser_version_check(dflt_mc_io);
+	if (err < 0) {
+		printf("dpsparser_version_check() failed: %d\n", err);
+		goto err_version_check;
+	}
+
+	err = dpsparser_open(dflt_mc_io,
+			     MC_CMD_NO_FLAGS,
+			     &dpsparser_handle);
+	if (err < 0) {
+		printf("dpsparser_open() failed: %d\n", err);
+		goto err_open;
+	}
+
+	return err;
+
+err_open:
+err_version_check:
+	dpsparser_destroy(dflt_mc_io,
+			  dflt_dprc_handle,
+			  MC_CMD_NO_FLAGS, dpsparser_obj_id);
+
+	return err;
+}
+
+#ifdef DPSPARSER_DESTROY
+/* TODO: refactoring needed in the future to allow DPSPARSER object destroy
+ * Workaround: DO NOT destroy DPSPARSER object because it needs to be available
+ * on Apply DPL
+ */
+static int dpsparser_exit(void)
+{
+	int err;
+
+	if (!is_dpsparser_supported())
+		return 0;
+
+	dpsparser_close(dflt_mc_io, MC_CMD_NO_FLAGS, dpsparser_handle);
+	if (err < 0) {
+		printf("dpsparser_close() failed: %d\n", err);
+		goto err;
+	}
+
+	err = dpsparser_destroy(dflt_mc_io, dflt_dprc_handle,
+				MC_CMD_NO_FLAGS, dpsparser_obj_id);
+	if (err < 0) {
+		printf("dpsparser_destroy() failed: %d\n", err);
+		goto err;
+	}
+	return 0;
+
+err:
+	return err;
+}
+#endif
+
+int mc_apply_spb(u64 mc_spb_addr)
+{
+	int err = 0;
+	u16 error, err_arr_size;
+	u64 mc_spb_offset;
+	u32 spb_size;
+	struct sp_blob_header *sp_blob;
+	u64 mc_ram_addr = mc_get_dram_addr();
+
+	if (!is_dpsparser_supported())
+		return 0;
+
+	if (!mc_spb_addr) {
+		printf("fsl-mc: Invalid Blob address\n");
+		return -1;
+	}
+
+#ifdef CONFIG_MC_DRAM_SPB_OFFSET
+	mc_spb_offset = CONFIG_MC_DRAM_SPB_OFFSET;
+#else
+#error "CONFIG_MC_DRAM_SPB_OFFSET not defined"
+#endif
+
+	// Read blob header and get size of SPB blob
+	sp_blob = (struct sp_blob_header *)mc_spb_addr;
+	spb_size = le32_to_cpu(sp_blob->length);
+	if (spb_size > CONFIG_MC_SPB_MAX_SIZE) {
+		printf("\nfsl-mc: ERROR: Bad SPB image (too large: %d)\n",
+		       spb_size);
+		return -EINVAL;
+	}
+
+	mc_copy_image("MC SP Blob", mc_spb_addr, spb_size,
+		      mc_ram_addr + mc_spb_offset);
+
+	//Invoke MC command to apply SPB blob
+	printf("fsl-mc: Applying soft parser blob... ");
+	err = dpsparser_apply_spb(dflt_mc_io, MC_CMD_NO_FLAGS, dpsparser_handle,
+				  mc_spb_offset, &error);
+	if (err)
+		return err;
+
+	if (error == 0) {
+		printf("SUCCESS\n");
+	} else {
+		printf("FAILED with error code = %d:\n", error);
+		err_arr_size = (u16)ARRAY_SIZE(mc_err_msg_apply_spb);
+
+		if (error > 0 && error < err_arr_size)
+			printf(mc_err_msg_apply_spb[error]);
+		else
+			printf(MC_ERROR_MSG_SPB_UNKNOWN);
+	}
+
 	return err;
 }
 
@@ -1327,19 +1770,27 @@ static int mc_init_object(void)
 		goto err;
 	}
 
+	err = dpsparser_init();
+	if (err < 0) {
+		printf("dpsparser_init() failed: %d\n", err);
+		goto err;
+	}
+
 	return 0;
 err:
 	return err;
 }
 
-int fsl_mc_ldpaa_exit(bd_t *bd)
+int fsl_mc_ldpaa_exit(struct bd_info *bd)
 {
 	int err = 0;
 	bool is_dpl_apply_status = false;
 	bool mc_boot_status = false;
 
 	if (bd && mc_lazy_dpl_addr && !fsl_mc_ldpaa_exit(NULL)) {
-		mc_apply_dpl(mc_lazy_dpl_addr);
+		err = mc_apply_dpl(mc_lazy_dpl_addr);
+		if (!err)
+			fdt_fixup_board_enet(working_fdt);
 		mc_lazy_dpl_addr = 0;
 	}
 
@@ -1360,12 +1811,13 @@ int fsl_mc_ldpaa_exit(bd_t *bd)
 	 */
 	if (bd && mc_boot_status && !is_dpl_apply_status) {
 		printf("fsl-mc: DPL not deployed, DPAA2 ethernet not work\n");
-		return 0;
+		goto mc_obj_cleanup;
 	}
 
 	if (bd && mc_boot_status && is_dpl_apply_status)
 		return 0;
 
+mc_obj_cleanup:
 	err = dpbp_exit();
 	if (err < 0) {
 		printf("dpbp_exit() failed: %d\n", err);
@@ -1395,21 +1847,91 @@ err:
 	return err;
 }
 
-static int do_fsl_mc(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static void print_k_bytes(const void *buf, ssize_t *size)
+{
+	while (*size > 0) {
+		int count = printf("%s", (char *)buf);
+
+		buf += count;
+		*size -= count;
+	}
+}
+
+static void mc_dump_log(void)
+{
+	struct mc_ccsr_registers __iomem *mc_ccsr_regs = MC_CCSR_BASE_ADDR;
+	u64 high = in_le64(&mc_ccsr_regs->reg_mcfbahr) & MC_FW_ADDR_MASK_HIGH;
+	u64 low = in_le64(&mc_ccsr_regs->reg_mcfbalr) & MC_FW_ADDR_MASK_LOW;
+	u32 buf_len, wrapped, last_byte, magic, buf_start;
+	u64 mc_addr = (high << 32) | low;
+	struct log_header *header;
+	ssize_t size, bytes_end;
+	const void *end_of_data;
+	const void *map_addr;
+	const void *end_addr;
+	const void *cur_ptr;
+	const void *buf;
+
+	map_addr = map_sysmem(mc_addr + MC_STRUCT_BUFFER_OFFSET,
+			      MC_BUFFER_SIZE);
+	header = (struct log_header *)map_addr;
+	last_byte = in_le32(&header->last_byte);
+	buf_len = in_le32(&header->buf_length);
+	magic = in_le32(&header->magic_word);
+	buf_start = in_le32(&header->buf_start);
+	buf = map_addr + buf_start - MC_OFFSET_DELTA;
+	end_addr = buf + buf_len;
+	wrapped = last_byte & LOG_HEADER_FLAG_BUFFER_WRAPAROUND;
+	end_of_data = buf + LAST_BYTE(last_byte);
+
+	if (magic != MAGIC_MC) {
+		puts("Magic number is not valid\n");
+		printf("expected = %08x, received = %08x\n", MAGIC_MC, magic);
+		goto err_magic;
+	}
+
+	if (wrapped && end_of_data != end_addr)
+		cur_ptr = end_of_data + 1;
+	else
+		cur_ptr = buf;
+
+	if (cur_ptr <= end_of_data)
+		size = end_of_data - cur_ptr;
+	else
+		size = (end_addr - cur_ptr) + (end_of_data - buf);
+
+	bytes_end = end_addr - cur_ptr;
+	if (size > bytes_end) {
+		print_k_bytes(cur_ptr, &bytes_end);
+
+		size -= bytes_end;
+	}
+
+	print_k_bytes(buf, &size);
+
+err_magic:
+	unmap_sysmem(map_addr);
+}
+
+static int do_fsl_mc(struct cmd_tbl *cmdtp, int flag, int argc,
+		     char *const argv[])
 {
 	int err = 0;
-	if (argc < 3)
+	if (argc < 2)
 		goto usage;
 
 	switch (argv[1][0]) {
 	case 's': {
 			char sub_cmd;
 			u64 mc_fw_addr, mc_dpc_addr;
-#ifdef CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
+#ifdef CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
 			u64 aiop_fw_addr;
 #endif
+			if (argc < 3)
+				goto usage;
 
 			sub_cmd = argv[2][0];
+
 			switch (sub_cmd) {
 			case 'm':
 				if (argc < 5)
@@ -1428,7 +1950,7 @@ static int do_fsl_mc(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 					err = mc_init_object();
 				break;
 
-#ifdef CONFIG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
+#ifdef CFG_SYS_LS_MC_DRAM_AIOP_IMG_OFFSET
 			case 'a':
 				if (argc < 4)
 					goto usage;
@@ -1456,44 +1978,106 @@ static int do_fsl_mc(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		}
 		break;
 
-	case 'l':
+	case 'l': {
+		/* lazyapply */
+		u64 mc_dpl_addr;
+
+		if (argc < 4)
+			goto usage;
+
+		if (get_dpl_apply_status() == 0) {
+			printf("fsl-mc: DPL already applied\n");
+			return err;
+		}
+
+		mc_dpl_addr = simple_strtoull(argv[3], NULL, 16);
+
+		if (get_mc_boot_status() != 0) {
+			printf("fsl-mc: Deploying data path layout ..");
+			printf("ERROR (MC is not booted)\n");
+			return -ENODEV;
+		}
+
+		/*
+		 * We will do the actual dpaa exit and dpl apply
+		 * later from announce_and_cleanup().
+		 */
+		mc_lazy_dpl_addr = mc_dpl_addr;
+
+		wait_for_dpl = true;
+		if (argc >= 5 && strcmp(argv[4], "nowait") == 0)
+			wait_for_dpl = false;
+
+		break;
+		}
+
 	case 'a': {
-			u64 mc_dpl_addr;
+		/* apply */
+		char sub_cmd;
+		u64 mc_apply_addr;
 
-			if (argc < 4)
-				goto usage;
+		if (argc < 4)
+			goto usage;
 
+		sub_cmd = argv[2][0];
+
+		switch (sub_cmd) {
+		case 'd':
+		case 'D':
 			if (get_dpl_apply_status() == 0) {
 				printf("fsl-mc: DPL already applied\n");
 				return err;
 			}
-
-			mc_dpl_addr = simple_strtoull(argv[3], NULL,
-							      16);
-
 			if (get_mc_boot_status() != 0) {
 				printf("fsl-mc: Deploying data path layout ..");
 				printf("ERROR (MC is not booted)\n");
 				return -ENODEV;
 			}
 
-			if (argv[1][0] == 'l') {
-				/*
-				 * We will do the actual dpaa exit and dpl apply
-				 * later from announce_and_cleanup().
-				 */
-				mc_lazy_dpl_addr = mc_dpl_addr;
-			} else {
-				/* The user wants it applied now */
-				if (!fsl_mc_ldpaa_exit(NULL))
-					err = mc_apply_dpl(mc_dpl_addr);
-			}
+			mc_apply_addr = simple_strtoull(argv[3], NULL, 16);
+
+			wait_for_dpl = true;
+			if (argc >= 5 && strcmp(argv[4], "nowait") == 0)
+				wait_for_dpl = false;
+
+			/* The user wants DPL applied now */
+			if (!fsl_mc_ldpaa_exit(NULL))
+				err = mc_apply_dpl(mc_apply_addr);
 			break;
+
+		case 's':
+			if (!is_dpsparser_supported()) {
+				printf("fsl-mc: apply spb command .. ");
+				printf("ERROR: requires at least MC 10.12.0\n");
+				return err;
+			}
+			if (get_mc_boot_status() != 0) {
+				printf("fsl-mc: Deploying Soft Parser Blob...");
+				printf("ERROR (MC is not booted)\n");
+				return err;
+			}
+
+			mc_apply_addr = simple_strtoull(argv[3], NULL, 16);
+
+			/* Apply spb (Soft Parser Blob) */
+			err = mc_apply_spb(mc_apply_addr);
+			break;
+
+		default:
+			printf("Invalid option: %s\n", argv[2]);
+			goto usage;
 		}
+		break;
+		}
+	case 'd':
+		if (argc > 2)
+			goto usage;
+
+		mc_dump_log();
+		break;
 	default:
 		printf("Invalid option: %s\n", argv[1]);
 		goto usage;
-		break;
 	}
 	return err;
  usage:
@@ -1503,10 +2087,12 @@ static int do_fsl_mc(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 U_BOOT_CMD(
 	fsl_mc,  CONFIG_SYS_MAXARGS,  1,   do_fsl_mc,
 	"DPAA2 command to manage Management Complex (MC)",
-	"start mc [FW_addr] [DPC_addr] - Start Management Complex\n"
-	"fsl_mc apply DPL [DPL_addr] - Apply DPL file\n"
-	"fsl_mc lazyapply DPL [DPL_addr] - Apply DPL file on exit\n"
-	"fsl_mc start aiop [FW_addr] - Start AIOP\n"
+	"fsl_mc start mc <fw_addr> <DPC_addr> - Start the Management Complex firmware\n"
+	"fsl_mc apply dpl <dpl_addr> [nowait] - Apply the DPL (Data Path Layout) file\n"
+	"fsl_mc lazyapply dpl <DPL_addr> [nowait] - Apply the DPL (Data Path Layout) file on exit\n"
+	"fsl_mc apply spb <spb_addr> - Apply the SPB Soft Parser Blob\n"
+	"fsl_mc start aiop <fw_addr> - Start AIOP\n"
+	"fsl_mc dump_log - Dump the MC Log\n"
 );
 
 void mc_env_boot(void)

@@ -1,14 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Common internal memory map for some Freescale SoCs
  *
  * Copyright 2015 Freescale Semiconductor, Inc.
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __FSL_SEC_MON_H
 #define __FSL_SEC_MON_H
 
-#include <common.h>
 #include <asm/io.h>
 
 #ifdef CONFIG_SYS_FSL_SEC_MON_LE
@@ -23,8 +22,6 @@
 #define sec_mon_in16(a)       in_be16(a)
 #define sec_mon_clrbits32     clrbits_be32
 #define sec_mon_setbits32     setbits_be32
-#else
-#error Neither CONFIG_SYS_FSL_SEC_MON_LE nor CONFIG_SYS_FSL_SEC_MON_BE defined
 #endif
 
 struct ccsr_sec_mon_regs {

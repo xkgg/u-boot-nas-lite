@@ -248,7 +248,6 @@ struct usb_descriptor_header {
 	__u8  bDescriptorType;
 } __attribute__ ((packed));
 
-
 /*-------------------------------------------------------------------------*/
 
 /* USB_DT_DEVICE: Device descriptor */
@@ -271,7 +270,6 @@ struct usb_device_descriptor {
 } __attribute__ ((packed));
 
 #define USB_DT_DEVICE_SIZE		18
-
 
 /*
  * Device and/or Interface Class codes
@@ -703,7 +701,6 @@ struct usb_qualifier_descriptor {
 	__u8  bRESERVED;
 } __attribute__ ((packed));
 
-
 /*-------------------------------------------------------------------------*/
 
 /* USB_DT_OTG (from OTG 1.0a supplement) */
@@ -744,7 +741,6 @@ struct usb_interface_assoc_descriptor {
 	__u8  bFunctionProtocol;
 	__u8  iFunction;
 } __attribute__ ((packed));
-
 
 /*-------------------------------------------------------------------------*/
 
@@ -788,7 +784,6 @@ struct usb_encryption_descriptor {
 	__u8  bEncryptionValue;		/* use in SET_ENCRYPTION */
 	__u8  bAuthKeyIndex;
 } __attribute__((packed));
-
 
 /*-------------------------------------------------------------------------*/
 
@@ -878,6 +873,9 @@ struct usb_ss_cap_descriptor {		/* Link Power Management */
 	__le16 bU2DevExitLat;
 } __attribute__((packed));
 
+#define USB_DEFAULT_U1_DEV_EXIT_LAT     0x01	/* Less then 1 microsec */
+#define USB_DEFAULT_U2_DEV_EXIT_LAT     0x01F4	/* Less then 500 microsec */
+
 #define USB_DT_USB_SS_CAP_SIZE	10
 
 /*
@@ -953,9 +951,8 @@ enum usb_device_speed {
 	USB_SPEED_HIGH,				/* usb 2.0 */
 	USB_SPEED_WIRELESS,			/* wireless (usb 2.5) */
 	USB_SPEED_SUPER,			/* usb 3.0 */
+	USB_SPEED_SUPER_PLUS,			/* usb 3.1 */
 };
-
-#ifdef __KERNEL__
 
 /**
  * usb_speed_string() - Returns human readable-name of the speed.
@@ -964,8 +961,6 @@ enum usb_device_speed {
  *   USB_SPEED_UNKNOWN will be returned.
  */
 extern const char *usb_speed_string(enum usb_device_speed speed);
-
-#endif
 
 enum usb_device_state {
 	/* NOTATTACHED isn't in the USB spec, and this state acts

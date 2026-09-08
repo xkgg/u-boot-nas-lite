@@ -5,16 +5,19 @@
  * SPDX-License-Identifier:     GPL-2.0+
  */
 
-#include <common.h>
+#include <asm/global_data.h>
 #include <dm.h>
 #include <fdtdec.h>
 #include <inttypes.h>
+#include <log.h>
+#include <malloc.h>
 #include <nand.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/kernel.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -487,8 +490,8 @@ static int rockchip_nand_hw_ecc_ctrl_init(struct mtd_info *mtd,
 	ecc->prepad = 4;
 	ecc->steps = mtd->writesize / ecc->size;
 
-	if (fdtdec_get_bool(gd->fdt_blob, chip->flash_node,
-			    "rockchip,protect-bootrom-blocks"))
+	if (ofnode_read_bool(chip->flash_node,
+			     "rockchip,protect-bootrom-blocks"))
 		rknand->bootromblocks = true;
 	else
 		rknand->bootromblocks = false;
@@ -586,7 +589,7 @@ static int rockchip_nand_chip_init(int node, struct rk_nand *rknand, int devnum)
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 
 	chip->chip_delay = 50;
-	chip->flash_node = node;
+	chip->flash_node = offset_to_ofnode(node);
 	chip->select_chip = rockchip_nand_select_chip;
 	chip->cmd_ctrl = rockchip_nand_cmd_ctrl;
 	chip->read_buf = rockchip_nand_read_buf;
@@ -605,8 +608,6 @@ static int rockchip_nand_chip_init(int node, struct rk_nand *rknand, int devnum)
 
 	mtd = nand_to_mtd(chip);
 	mtd->dev = rknand->dev;
-	if (rknand->dev)
-		rknand->dev->priv = mtd;
 
 	ret = nand_scan_ident(mtd, 1, NULL);
 	if (ret)
@@ -664,7 +665,7 @@ static int rockchip_nandc_probe(struct udevice *dev)
 	fdt_addr_t regs;
 	int ret = 0, node;
 
-	node = fdtdec_next_compatible(blob, 0, COMPAT_ROCKCHIP_NANDC);
+	node = fdt_node_offset_by_compatible(blob, 0, "rockchip,rk-nandc");
 
 	rknand->dev = dev;
 
@@ -711,7 +712,7 @@ U_BOOT_DRIVER(rk_nandc_v9) = {
 	.of_match       = rockchip_nandc_ids,
 	.bind		= rockchip_nandc_bind,
 	.probe          = rockchip_nandc_probe,
-	.priv_auto_alloc_size = sizeof(struct rk_nand),
+	.priv_auto = sizeof(struct rk_nand),
 };
 
 void board_nand_init(void)
@@ -720,7 +721,7 @@ void board_nand_init(void)
 	int ret;
 
 	ret = uclass_get_device_by_driver(UCLASS_MTD,
-					  DM_GET_DRIVER(rk_nandc_v9),
+					  DM_DRIVER_GET(rk_nandc_v9),
 					  &dev);
 	if (ret && ret != -ENODEV)
 		pr_err("Failed to initialize NAND controller. (error %d)\n",
@@ -738,7 +739,7 @@ void board_nand_init(void)
 
 	rknand = kzalloc(sizeof(*rknand), GFP_KERNEL);
 
-	node = fdtdec_next_compatible(blob, 0, COMPAT_ROCKCHIP_NANDC);
+	node = fdt_node_offset_by_compatible(blob, 0, "rockchip,rk-nandc");
 
 	if (node < 0) {
 		debug("Nand node not found\n");

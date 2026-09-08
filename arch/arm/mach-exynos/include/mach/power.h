@@ -1,14 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2011 Samsung Electronics
  * Heungjun Kim <riverful.kim@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __ASM_ARM_ARCH_POWER_H_
 #define __ASM_ARM_ARCH_POWER_H_
 
 #ifndef __ASSEMBLY__
+#include <linux/types.h>
+
 struct exynos4_power {
 	unsigned int	om_stat;
 	unsigned char	res1[0x8];
@@ -1750,7 +1751,6 @@ void set_xclkout(void);
  *  if none of these then its normal booting.
  */
 uint32_t get_reset_status(void);
-
 
 /* Read the resume function and call it */
 void power_exit_wakeup(void);

@@ -1,11 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2017, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __EARLY_CMOS_H
 #define __EARLY_CMOS_H
+
+#include <linux/types.h>
 
 /* CMOS actually resides in the RTC SRAM */
 #define CMOS_IO_PORT	0x70

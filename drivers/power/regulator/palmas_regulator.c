@@ -1,22 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2016
  * Texas Instruments Incorporated, <www.ti.com>
  *
  * Keerthy <j-keerthy@ti.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <fdtdec.h>
 #include <errno.h>
 #include <dm.h>
-#include <i2c.h>
 #include <power/pmic.h>
 #include <power/regulator.h>
 #include <power/palmas.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 #define	REGULATOR_ON		0x1
 #define	REGULATOR_OFF		0x0
@@ -54,9 +49,9 @@ static int palmas_smps_enable(struct udevice *dev, int op, bool *enable)
 {
 	int ret;
 	unsigned int adr;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 	adr = uc_pdata->ctrl_reg;
 
 	ret = pmic_reg_read(dev->parent, adr);
@@ -120,12 +115,12 @@ static int palmas_smps_hex2volt(int hex, bool range)
 
 static int palmas_smps_val(struct udevice *dev, int op, int *uV)
 {
-	unsigned int hex, adr;
-	int ret;
+	unsigned int adr;
+	int hex, ret;
 	bool range;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 
 	if (op == PMIC_OP_GET)
 		*uV = 0;
@@ -166,7 +161,7 @@ static int palmas_smps_val(struct udevice *dev, int op, int *uV)
 static int palmas_ldo_bypass_enable(struct udevice *dev, bool enabled)
 {
 	int type = dev_get_driver_data(dev_get_parent(dev));
-	struct dm_regulator_uclass_platdata *p;
+	struct dm_regulator_uclass_plat *p;
 	unsigned int adr;
 	int reg;
 
@@ -180,7 +175,7 @@ static int palmas_ldo_bypass_enable(struct udevice *dev, bool enabled)
 			return -ENOTSUPP;
 	}
 
-	p = dev_get_uclass_platdata(dev);
+	p = dev_get_uclass_plat(dev);
 	adr = p->ctrl_reg;
 
 	reg = pmic_reg_read(dev->parent, adr);
@@ -199,9 +194,9 @@ static int palmas_ldo_enable(struct udevice *dev, int op, bool *enable)
 {
 	int ret;
 	unsigned int adr;
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 	adr = uc_pdata->ctrl_reg;
 
 	ret = pmic_reg_read(dev->parent, adr);
@@ -256,15 +251,15 @@ static int palmas_ldo_hex2volt(int hex)
 
 static int palmas_ldo_val(struct udevice *dev, int op, int *uV)
 {
-	unsigned int hex, adr;
-	int ret;
+	unsigned int adr;
+	int hex, ret;
 
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
 	if (op == PMIC_OP_GET)
 		*uV = 0;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 
 	adr = uc_pdata->volt_reg;
 
@@ -295,29 +290,33 @@ static int palmas_ldo_val(struct udevice *dev, int op, int *uV)
 
 static int palmas_ldo_probe(struct udevice *dev)
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	struct udevice *parent;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 
 	parent = dev_get_parent(dev);
 	int type = dev_get_driver_data(parent);
 
 	uc_pdata->type = REGULATOR_TYPE_LDO;
 
-	if (dev->driver_data) {
+	/* check for ldoln and ldousb cases */
+	if (!strcmp("ldoln", dev->name)) {
+		uc_pdata->ctrl_reg = palmas_ldo_ctrl[type][9];
+		uc_pdata->volt_reg = palmas_ldo_volt[type][9];
+		return 0;
+	}
+
+	if (!strcmp("ldousb", dev->name)) {
+		uc_pdata->ctrl_reg = palmas_ldo_ctrl[type][10];
+		uc_pdata->volt_reg = palmas_ldo_volt[type][10];
+		return 0;
+	}
+
+	if (dev->driver_data > 0) {
 		u8 idx = dev->driver_data - 1;
 		uc_pdata->ctrl_reg = palmas_ldo_ctrl[type][idx];
 		uc_pdata->volt_reg = palmas_ldo_volt[type][idx];
-	} else {
-		/* check for ldoln and ldousb cases */
-		if (!strcmp("ldoln", dev->name)) {
-			uc_pdata->ctrl_reg = palmas_ldo_ctrl[type][9];
-			uc_pdata->volt_reg = palmas_ldo_volt[type][9];
-		} else if (!strcmp("ldousb", dev->name)) {
-			uc_pdata->ctrl_reg = palmas_ldo_ctrl[type][10];
-			uc_pdata->volt_reg = palmas_ldo_volt[type][10];
-		}
 	}
 
 	return 0;
@@ -359,11 +358,11 @@ static int ldo_set_enable(struct udevice *dev, bool enable)
 
 static int palmas_smps_probe(struct udevice *dev)
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 	struct udevice *parent;
 	int idx;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 
 	parent = dev_get_parent(dev);
 	int type = dev_get_driver_data(parent);

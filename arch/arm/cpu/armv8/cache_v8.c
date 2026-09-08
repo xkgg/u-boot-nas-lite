@@ -1,20 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2013
  * David Feng <fenghua@phytium.com.cn>
  *
  * (C) Copyright 2016
  * Alexander Graf <agraf@suse.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <cpu_func.h>
+#include <hang.h>
+#include <log.h>
+#include <asm/cache.h>
+#include <asm/global_data.h>
 #include <asm/system.h>
 #include <asm/armv8/mmu.h>
+#include <linux/errno.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
-#ifndef CONFIG_SYS_DCACHE_OFF
+#if !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)
 
 /*
  *  With 4k page granule, a virtual address is split into 4 lookup parts
@@ -35,8 +39,76 @@ DECLARE_GLOBAL_DATA_PTR;
  *    off:          FFF
  */
 
-u64 get_tcr(int el, u64 *pips, u64 *pva_bits)
+static int get_effective_el(void)
 {
+	int el = current_el();
+
+	if (el == 2) {
+		u64 hcr_el2;
+
+		/*
+		 * If we are using the EL2&0 translation regime, the TCR_EL2
+		 * looks like the EL1 version, even though we are in EL2.
+		 */
+		__asm__ ("mrs %0, HCR_EL2\n" : "=r" (hcr_el2));
+		if (hcr_el2 & BIT(HCR_EL2_E2H_BIT))
+			return 1;
+	}
+
+	return el;
+}
+
+int mem_map_from_dram_banks(unsigned int index, unsigned int len, u64 attrs)
+{
+	unsigned int i;
+
+	if (index + CONFIG_NR_DRAM_BANKS >= len) {
+		log_err("%s: Provided mem_map array has insufficient size for DRAM entries\n",
+			__func__);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < CONFIG_NR_DRAM_BANKS; i++) {
+		mem_map[index].virt = gd->bd->bi_dram[i].start;
+		mem_map[index].phys = gd->bd->bi_dram[i].start;
+		mem_map[index].size = gd->bd->bi_dram[i].size;
+		mem_map[index].attrs = attrs;
+		index++;
+	}
+
+	memset(&mem_map[index], 0, sizeof(mem_map[index]));
+
+	return 0;
+}
+
+int mmu_unmap_reserved_mem(const char *name, bool check_nomap)
+{
+	void *fdt = (void *)gd->fdt_blob;
+	char node_path[128];
+	fdt_addr_t addr;
+	fdt_size_t size;
+	int ret;
+
+	snprintf(node_path, sizeof(node_path), "/reserved-memory/%s", name);
+	ret = fdt_path_offset(fdt, node_path);
+	if (ret < 0)
+		return ret;
+
+	if (check_nomap && !fdtdec_get_bool(fdt, ret, "no-map"))
+		return -EINVAL;
+
+	addr = fdtdec_get_addr_size(fdt, ret, "reg", &size);
+	if (addr == FDT_ADDR_T_NONE)
+		return -1;
+
+	mmu_change_region_attr_nobreak(addr, size, PTE_TYPE_FAULT);
+
+	return 0;
+}
+
+u64 get_tcr(u64 *pips, u64 *pva_bits)
+{
+	int el = get_effective_el();
 	u64 max_addr = 0;
 	u64 ips, va_bits;
 	u64 tcr;
@@ -109,9 +181,9 @@ static u64 *find_pte(u64 addr, int level)
 	u64 va_bits;
 	int i;
 
-	pr_debug("addr=%llx level=%d\n", addr, level);
+	debug("addr=%llx level=%d\n", addr, level);
 
-	get_tcr(0, NULL, &va_bits);
+	get_tcr(NULL, &va_bits);
 	if (va_bits < 39)
 		start_level = 1;
 
@@ -123,7 +195,7 @@ static u64 *find_pte(u64 addr, int level)
 	for (i = start_level; i < 4; i++) {
 		idx = (addr >> level2shift(i)) & 0x1FF;
 		pte += idx;
-		pr_debug("idx=%llx PTE %p at level %d: %llx\n", idx, pte, i, *pte);
+		debug("idx=%llx PTE %p at level %d: %llx\n", idx, pte, i, *pte);
 
 		/* Found it */
 		if (i == level)
@@ -138,6 +210,83 @@ static u64 *find_pte(u64 addr, int level)
 	/* Should never reach here */
 	return NULL;
 }
+
+#ifdef CONFIG_CMO_BY_VA_ONLY
+static void __cmo_on_leaves(void (*cmo_fn)(unsigned long, unsigned long),
+			    u64 pte, int level, u64 base)
+{
+	u64 *ptep;
+	int i;
+
+	ptep = (u64 *)(pte & GENMASK_ULL(47, PAGE_SHIFT));
+	for (i = 0; i < PAGE_SIZE / sizeof(u64); i++) {
+		u64 end, va = base + i * BIT(level2shift(level));
+		u64 type, attrs;
+
+		pte = ptep[i];
+		type = pte & PTE_TYPE_MASK;
+		attrs = pte & PMD_ATTRINDX_MASK;
+		debug("PTE %llx at level %d VA %llx\n", pte, level, va);
+
+		/* Not valid? next! */
+		if (!(type & PTE_TYPE_VALID))
+			continue;
+
+		/* Not a leaf? Recurse on the next level */
+		if (!(type == PTE_TYPE_BLOCK ||
+		      (level == 3 && type == PTE_TYPE_PAGE))) {
+			__cmo_on_leaves(cmo_fn, pte, level + 1, va);
+			continue;
+		}
+
+		/*
+		 * From this point, this must be a leaf.
+		 *
+		 * Start excluding non memory mappings
+		 */
+		if (attrs != PTE_BLOCK_MEMTYPE(MT_NORMAL) &&
+		    attrs != PTE_BLOCK_MEMTYPE(MT_NORMAL_NC))
+			continue;
+
+		end = va + BIT(level2shift(level)) - 1;
+
+		/* No intersection with RAM? */
+		if (end < gd->ram_base ||
+		    va >= (gd->ram_base + gd->ram_size))
+			continue;
+
+		/*
+		 * OK, we have a partial RAM mapping. However, this
+		 * can cover *more* than the RAM. Yes, u-boot is
+		 * *that* braindead. Compute the intersection we care
+		 * about, and not a byte more.
+		 */
+		va = max(va, (u64)gd->ram_base);
+		end = min(end, gd->ram_base + gd->ram_size);
+
+		debug("Flush PTE %llx at level %d: %llx-%llx\n",
+		      pte, level, va, end);
+		cmo_fn(va, end);
+	}
+}
+
+static void apply_cmo_to_mappings(void (*cmo_fn)(unsigned long, unsigned long))
+{
+	u64 va_bits;
+	int sl = 0;
+
+	if (!gd->arch.tlb_addr)
+		return;
+
+	get_tcr(NULL, &va_bits);
+	if (va_bits < 39)
+		sl = 1;
+
+	__cmo_on_leaves(cmo_fn, gd->arch.tlb_addr, sl, 0);
+}
+#else
+static inline void apply_cmo_to_mappings(void *dummy) {}
+#endif
 
 /* Returns and creates a new full table (512 entries) */
 static u64 *create_table(void)
@@ -163,7 +312,7 @@ static u64 *create_table(void)
 static void set_pte_table(u64 *pte, u64 *table)
 {
 	/* Point *pte to the new table */
-	pr_debug("Setting %p to addr=%p\n", pte, table);
+	debug("Setting %p to addr=%p\n", pte, table);
 	*pte = PTE_TYPE_TABLE | (ulong)table;
 }
 
@@ -182,7 +331,7 @@ static void split_block(u64 *pte, int level)
 		      "mem_map.", pte, old_pte);
 
 	new_table = create_table();
-	pr_debug("Splitting pte %p (%llx) into %p\n", pte, old_pte, new_table);
+	debug("Splitting pte %p (%llx) into %p\n", pte, old_pte, new_table);
 
 	for (i = 0; i < MAX_PTE_ENTRIES; i++) {
 		new_table[i] = old_pte | (i << levelshift);
@@ -191,160 +340,408 @@ static void split_block(u64 *pte, int level)
 		if ((level + 1) == 3)
 			new_table[i] |= PTE_TYPE_TABLE;
 
-		pr_debug("Setting new_table[%lld] = %llx\n", i, new_table[i]);
+		debug("Setting new_table[%lld] = %llx\n", i, new_table[i]);
 	}
 
 	/* Set the new table into effect */
 	set_pte_table(pte, new_table);
 }
 
-/* Add one mm_region map entry to the page tables */
-static void add_map(struct mm_region *map)
+static void map_range(u64 virt, u64 phys, u64 size, int level,
+		      u64 *table, u64 attrs)
 {
-	u64 *pte;
-	u64 virt = map->virt;
-	u64 phys = map->phys;
-	u64 size = map->size;
-	u64 attrs = map->attrs | PTE_TYPE_BLOCK | PTE_BLOCK_AF;
-	u64 blocksize;
-	int level;
-	u64 *new_table;
+	u64 map_size = BIT_ULL(level2shift(level));
+	int i, idx;
 
-	while (size) {
-		pte = find_pte(virt, 0);
-		if (pte && (pte_type(pte) == PTE_TYPE_FAULT)) {
-			pr_debug("Creating table for virt 0x%llx\n", virt);
-			new_table = create_table();
-			set_pte_table(pte, new_table);
+	idx = (virt >> level2shift(level)) & (MAX_PTE_ENTRIES - 1);
+	for (i = idx; size; i++) {
+		u64 next_size, *next_table;
+
+		if (level >= 1 &&
+		    size >= map_size && !(virt & (map_size - 1))) {
+			if (level == 3)
+				table[i] = phys | attrs | PTE_TYPE_PAGE;
+			else
+				table[i] = phys | attrs;
+
+			virt += map_size;
+			phys += map_size;
+			size -= map_size;
+
+			continue;
 		}
 
-		for (level = 1; level < 4; level++) {
-			pte = find_pte(virt, level);
-			if (!pte)
-				panic("pte not found\n");
+		/* Going one level down */
+		if (pte_type(&table[i]) == PTE_TYPE_FAULT)
+			set_pte_table(&table[i], create_table());
+		else if (pte_type(&table[i]) != PTE_TYPE_TABLE)
+			split_block(&table[i], level);
 
-			blocksize = 1ULL << level2shift(level);
-			pr_debug("Checking if pte fits for virt=%llx size=%llx blocksize=%llx\n",
-			      virt, size, blocksize);
-			if (size >= blocksize && !(virt & (blocksize - 1))) {
-				/* Page fits, create block PTE */
-				pr_debug("Setting PTE %p to block virt=%llx\n",
-				      pte, virt);
-				if (level == 3)
-					*pte = phys | attrs | PTE_TYPE_PAGE;
-				else
-					*pte = phys | attrs;
-				virt += blocksize;
-				phys += blocksize;
-				size -= blocksize;
-				break;
-			} else if (pte_type(pte) == PTE_TYPE_FAULT) {
-				/* Page doesn't fit, create subpages */
-				pr_debug("Creating subtable for virt 0x%llx blksize=%llx\n",
-				      virt, blocksize);
-				new_table = create_table();
-				set_pte_table(pte, new_table);
-			} else if (pte_type(pte) == PTE_TYPE_BLOCK) {
-				pr_debug("Split block into subtable for virt 0x%llx blksize=0x%llx\n",
-				      virt, blocksize);
-				split_block(pte, level);
-			}
-		}
+		next_table = (u64 *)(table[i] & GENMASK_ULL(47, PAGE_SHIFT));
+		next_size = min(map_size - (virt & (map_size - 1)), size);
+
+		map_range(virt, phys, next_size, level + 1, next_table, attrs);
+
+		virt += next_size;
+		phys += next_size;
+		size -= next_size;
 	}
 }
 
-enum pte_type {
-	PTE_INVAL,
-	PTE_BLOCK,
-	PTE_LEVEL,
+void mmu_map_region(phys_addr_t addr, u64 size, bool emergency)
+{
+	u64 va_bits;
+	int level = 0;
+	u64 attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_INNER_SHARE;
+
+	attrs |= PTE_TYPE_BLOCK | PTE_BLOCK_AF;
+
+	get_tcr(NULL, &va_bits);
+	if (va_bits < 39)
+		level = 1;
+
+	if (emergency)
+		map_range(addr, addr, size, level,
+			  (u64 *)gd->arch.tlb_emerg, attrs);
+
+	/* Switch pagetables while we update the primary one */
+	__asm_switch_ttbr(gd->arch.tlb_emerg);
+
+	map_range(addr, addr, size, level,
+		  (u64 *)gd->arch.tlb_addr, attrs);
+
+	__asm_switch_ttbr(gd->arch.tlb_addr);
+}
+
+static void add_map(struct mm_region *map)
+{
+	u64 attrs = map->attrs | PTE_TYPE_BLOCK | PTE_BLOCK_AF;
+	u64 va_bits;
+	int level = 0;
+
+	get_tcr(NULL, &va_bits);
+	if (va_bits < 39)
+		level = 1;
+
+	map_range(map->virt, map->phys, map->size, level,
+		  (u64 *)gd->arch.tlb_addr, attrs);
+}
+
+static void count_range(u64 virt, u64 size, int level, int *cntp)
+{
+	u64 map_size = BIT_ULL(level2shift(level));
+	int i, idx;
+
+	idx = (virt >> level2shift(level)) & (MAX_PTE_ENTRIES - 1);
+	for (i = idx; size; i++) {
+		u64 next_size;
+
+		if (level >= 1 &&
+		    size >= map_size && !(virt & (map_size - 1))) {
+			virt += map_size;
+			size -= map_size;
+
+			continue;
+		}
+
+		/* Going one level down */
+		(*cntp)++;
+		next_size = min(map_size - (virt & (map_size - 1)), size);
+
+		count_range(virt, next_size, level + 1, cntp);
+
+		virt += next_size;
+		size -= next_size;
+	}
+}
+
+static int count_ranges(void)
+{
+	int i, count = 0, level = 0;
+	u64 va_bits;
+
+	get_tcr(NULL, &va_bits);
+	if (va_bits < 39)
+		level = 1;
+
+	for (i = 0; mem_map[i].size || mem_map[i].attrs; i++)
+		count_range(mem_map[i].virt, mem_map[i].size, level, &count);
+
+	return count;
+}
+
+#define ALL_ATTRS (3 << 8 | PMD_ATTRMASK)
+#define PTE_IS_TABLE(pte, level) (pte_type(&(pte)) == PTE_TYPE_TABLE && (level) < 3)
+
+enum walker_state {
+	WALKER_STATE_START = 0,
+	WALKER_STATE_TABLE,
+	WALKER_STATE_REGION, /* block or page, depending on level */
 };
 
-/*
- * This is a recursively called function to count the number of
- * page tables we need to cover a particular PTE range. If you
- * call this with level = -1 you basically get the full 48 bit
- * coverage.
+
+/**
+ * __pagetable_walk() - Walk through the pagetable and call cb() for each memory region
+ *
+ * This is a software implementation of the ARMv8-A MMU translation table walk. As per
+ * section D5.4 of the ARMv8-A Architecture Reference Manual. It recursively walks the
+ * 4 or 3 levels of the page table and calls the callback function for each discrete
+ * region of memory (that being the discovery of a new table, a collection of blocks
+ * with the same attributes, or of pages with the same attributes).
+ *
+ * U-Boot picks the smallest number of virtual address (VA) bits that it can based on the
+ * memory map configured by the board. If this is less than 39 then the MMU will only use
+ * 3 levels of translation instead of 3 - skipping level 0.
+ *
+ * Each level has 512 entries of 64-bits each. Each entry includes attribute bits and
+ * an address. When the attribute bits indicate a table, the address is the physical
+ * address of the table, so we can recursively call _pagetable_walk() on it (after calling
+ * @cb). If instead they indicate a block or page, we record the start address and attributes
+ * and continue walking until we find a region with different attributes, or the end of the
+ * table, in either case we call @cb with the start and end address of the region.
+ *
+ * This approach can be used to fully emulate the MMU's translation table walk, as per
+ * Figure D5-25 of the ARMv8-A Architecture Reference Manual.
+ *
+ * @addr:		The address of the table to walk
+ * @tcr:		The TCR register value
+ * @level:		The current level of the table
+ * @cb:			The callback function to call for each region
+ * @priv:		Private data to pass to the callback function
  */
-static int count_required_pts(u64 addr, int level, u64 maxaddr)
+static void __pagetable_walk(u64 addr, u64 tcr, int level, pte_walker_cb_t cb, void *priv)
 {
-	int levelshift = level2shift(level);
-	u64 levelsize = 1ULL << levelshift;
-	u64 levelmask = levelsize - 1;
-	u64 levelend = addr + levelsize;
-	int r = 0;
+	u64 *table = (u64 *)addr;
+	u64 attrs, last_attrs = 0, last_addr = 0, entry_start = 0;
 	int i;
-	enum pte_type pte_type = PTE_INVAL;
+	u64 va_bits = 64 - (tcr & (BIT(6) - 1));
+	static enum walker_state state[4] = { 0 };
+	static bool exit;
 
-	for (i = 0; mem_map[i].size || mem_map[i].attrs; i++) {
-		struct mm_region *map = &mem_map[i];
-		u64 start = map->virt;
-		u64 end = start + map->size;
+	if (!level) {
+		exit = false;
+		if (va_bits < 39)
+			level = 1;
+	}
 
-		/* Check if the PTE would overlap with the map */
-		if (max(addr, start) <= min(levelend, end)) {
-			start = max(addr, start);
-			end = min(levelend, end);
+	state[level] = WALKER_STATE_START;
 
-			/* We need a sub-pt for this level */
-			if ((start & levelmask) || (end & levelmask)) {
-				pte_type = PTE_LEVEL;
-				break;
+	/* Walk through the table entries */
+	for (i = 0; i < MAX_PTE_ENTRIES; i++) {
+		u64 pte = table[i];
+		u64 _addr = pte & GENMASK_ULL(va_bits, PAGE_SHIFT);
+
+		if (exit)
+			return;
+
+		if (pte_type(&pte) == PTE_TYPE_FAULT)
+			continue;
+
+		attrs = pte & ALL_ATTRS;
+		/* If we're currently inside a block or set of pages */
+		if (state[level] > WALKER_STATE_START && state[level] != WALKER_STATE_TABLE) {
+			/*
+			 * Continue walking if this entry has the same attributes as the last and
+			 * is one page/block away -- it's a contiguous region.
+			 */
+			if (attrs == last_attrs && _addr == last_addr + (1 << level2shift(level))) {
+				last_attrs = attrs;
+				last_addr = _addr;
+				continue;
+			} else {
+				/* We either hit a table or a new region */
+				exit = cb(entry_start, last_addr + (1 << level2shift(level)),
+					  va_bits, level, priv);
+				if (exit)
+					return;
+				state[level] = WALKER_STATE_START;
 			}
+		}
+		last_attrs = attrs;
+		last_addr = _addr;
 
-			/* Lv0 can not do block PTEs, so do levels here too */
-			if (level <= 0) {
-				pte_type = PTE_LEVEL;
-				break;
-			}
+		if (PTE_IS_TABLE(pte, level)) {
+			/* After the end of the table might be corrupted data */
+			if (!_addr || (pte & 0xfff) > 0x3ff)
+				return;
+			state[level] = WALKER_STATE_TABLE;
+			/* Signify the start of a table */
+			exit = cb(pte, 0, va_bits, level, priv);
+			if (exit)
+				return;
 
-			/* PTE is active, but fits into a block */
-			pte_type = PTE_BLOCK;
+			/* Go down a level */
+			__pagetable_walk(_addr, tcr, level + 1, cb, priv);
+			state[level] = WALKER_STATE_START;
+		} else if (pte_type(&pte) == PTE_TYPE_BLOCK || pte_type(&pte) == PTE_TYPE_PAGE) {
+			/* We foud a block or page, start walking */
+			entry_start = pte;
+			state[level] = WALKER_STATE_REGION;
 		}
 	}
 
-	/*
-	 * Block PTEs at this level are already covered by the parent page
-	 * table, so we only need to count sub page tables.
-	 */
-	if (pte_type == PTE_LEVEL) {
-		int sublevel = level + 1;
-		u64 sublevelsize = 1ULL << level2shift(sublevel);
+	if (state[level] > WALKER_STATE_START)
+		exit = cb(entry_start, last_addr + (1 << level2shift(level)), va_bits, level, priv);
+}
 
-		/* Account for the new sub page table ... */
-		r = 1;
-
-		/* ... and for all child page tables that one might have */
-		for (i = 0; i < MAX_PTE_ENTRIES; i++) {
-			r += count_required_pts(addr, sublevel, maxaddr);
-			addr += sublevelsize;
-
-			if (addr >= maxaddr) {
-				/*
-				 * We reached the end of address space, no need
-				 * to look any further.
-				 */
-				break;
-			}
-		}
+static void pretty_print_pte_type(u64 pte)
+{
+	switch (pte_type(&pte)) {
+	case PTE_TYPE_FAULT:
+		printf(" %-5s", "Fault");
+		break;
+	case PTE_TYPE_BLOCK:
+		printf(" %-5s", "Block");
+		break;
+	case PTE_TYPE_PAGE:
+		printf(" %-5s", "Pages");
+		break;
+	default:
+		printf(" %-5s", "Unk");
 	}
+}
 
-	return r;
+static void pretty_print_table_attrs(u64 pte)
+{
+	int ap = (pte & PTE_TABLE_AP) >> 61;
+
+	printf(" | %2s %10s",
+	       (ap & 2) ? "RO" : "",
+	       (ap & 1) ? "!EL0" : "");
+	printf(" | %3s %2s %2s",
+	       (pte & PTE_TABLE_PXN) ? "PXN" : "",
+	       (pte & PTE_TABLE_XN) ? "XN" : "",
+	       (pte & PTE_TABLE_NS) ? "NS" : "");
+}
+
+static void pretty_print_block_attrs(u64 pte)
+{
+	u64 attrs = pte & PMD_ATTRINDX_MASK;
+	u64 perm_attrs = pte & PMD_ATTRMASK;
+	char mem_attrs[16] = { 0 };
+	int cnt = 0;
+
+	if (perm_attrs & PTE_BLOCK_PXN)
+		cnt += snprintf(mem_attrs + cnt, sizeof(mem_attrs) - cnt, "PXN ");
+	if (perm_attrs & PTE_BLOCK_UXN) {
+		if (get_effective_el() == 1)
+			cnt += snprintf(mem_attrs + cnt, sizeof(mem_attrs) - cnt, "UXN ");
+		else
+			cnt += snprintf(mem_attrs + cnt, sizeof(mem_attrs) - cnt, "XN ");
+	}
+	if (perm_attrs & PTE_BLOCK_RO)
+		cnt += snprintf(mem_attrs + cnt, sizeof(mem_attrs) - cnt, "RO");
+	if (!mem_attrs[0])
+		snprintf(mem_attrs, sizeof(mem_attrs), "RWX ");
+
+	printf(" | %-10s", mem_attrs);
+
+	switch (attrs) {
+	case PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE):
+		printf(" | %-13s", "Device-nGnRnE");
+		break;
+	case PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRE):
+		printf(" | %-13s", "Device-nGnRE");
+		break;
+	case PTE_BLOCK_MEMTYPE(MT_DEVICE_GRE):
+		printf(" | %-13s", "Device-GRE");
+		break;
+	case PTE_BLOCK_MEMTYPE(MT_NORMAL_NC):
+		printf(" | %-13s", "Normal-NC");
+		break;
+	case PTE_BLOCK_MEMTYPE(MT_NORMAL):
+		printf(" | %-13s", "Normal");
+		break;
+	default:
+		printf(" | %-13s", "Unknown");
+	}
+}
+
+static void pretty_print_block_memtype(u64 pte)
+{
+	u64 share = pte & (3 << 8);
+
+	switch (share) {
+	case PTE_BLOCK_NON_SHARE:
+		printf(" | %-16s", "Non-shareable");
+		break;
+	case PTE_BLOCK_OUTER_SHARE:
+		printf(" | %-16s", "Outer-shareable");
+		break;
+	case PTE_BLOCK_INNER_SHARE:
+		printf(" | %-16s", "Inner-shareable");
+		break;
+	default:
+		printf(" | %-16s", "Unknown");
+	}
+}
+
+static void print_pte(u64 pte, int level)
+{
+	if (PTE_IS_TABLE(pte, level)) {
+		printf(" %-5s", "Table");
+		printf(" %-12s", "|");
+		pretty_print_table_attrs(pte);
+	} else {
+		pretty_print_pte_type(pte);
+		pretty_print_block_attrs(pte);
+		pretty_print_block_memtype(pte);
+	}
+	printf("\n");
+}
+
+/**
+ * pagetable_print_entry() - Callback function to print a single pagetable region
+ *
+ * This is the default callback used by @dump_pagetable(). It does some basic pretty
+ * printing (see example in the U-Boot arm64 documentation). It can be replaced by
+ * a custom callback function if more detailed information is needed.
+ *
+ * @start_attrs:	The start address and attributes of the region (or table address)
+ * @end:		The end address of the region (or 0 if it's a table)
+ * @va_bits:		The number of bits used for the virtual address
+ * @level:		The level of the region
+ * @priv:		Private data for the callback (unused)
+ */
+static bool pagetable_print_entry(u64 start_attrs, u64 end, int va_bits, int level, void *priv)
+{
+	u64 _addr = start_attrs & GENMASK_ULL(va_bits, PAGE_SHIFT);
+	int indent = va_bits < 39 ? level - 1 : level;
+
+	printf("%*s", indent * 2, "");
+	if (PTE_IS_TABLE(start_attrs, level))
+		printf("[%#016llx]%19s", _addr, "");
+	else
+		printf("[%#016llx - %#016llx]", _addr, end);
+
+	printf("%*s | ", (3 - level) * 2, "");
+	print_pte(start_attrs, level);
+
+	return false;
+}
+
+void walk_pagetable(u64 ttbr, u64 tcr, pte_walker_cb_t cb, void *priv)
+{
+	__pagetable_walk(ttbr, tcr, 0, cb, priv);
+}
+
+void dump_pagetable(u64 ttbr, u64 tcr)
+{
+	u64 va_bits = 64 - (tcr & (BIT(6) - 1));
+
+	printf("Walking pagetable at %p, va_bits: %lld. Using %d levels\n", (void *)ttbr,
+	       va_bits, va_bits < 39 ? 3 : 4);
+	walk_pagetable(ttbr, tcr, pagetable_print_entry, NULL);
 }
 
 /* Returns the estimated required size of all page tables */
 __weak u64 get_page_table_size(void)
 {
 	u64 one_pt = MAX_PTE_ENTRIES * sizeof(u64);
-	u64 size = 0;
-	u64 va_bits;
-	int start_level = 0;
-
-	get_tcr(0, NULL, &va_bits);
-	if (va_bits < 39)
-		start_level = 1;
+	u64 size;
 
 	/* Account for all page tables we would need to cover our memory map */
-	size = one_pt * count_required_pts(0, start_level - 1, 1ULL << va_bits);
+	size = one_pt * count_ranges();
 
 	/*
 	 * We need to duplicate our page table once to have an emergency pt to
@@ -411,10 +808,12 @@ __weak void mmu_setup(void)
 		setup_all_pgtables();
 
 	el = current_el();
-	set_ttbr_tcr_mair(el, gd->arch.tlb_addr, get_tcr(el, NULL, NULL),
+	set_ttbr_tcr_mair(el, gd->arch.tlb_addr, get_tcr(NULL, NULL),
 			  MEMORY_ATTRIBUTES);
+}
 
-	/* enable the mmu */
+void mmu_enable(void)
+{
 	set_sctlr(get_sctlr() | CR_M);
 }
 
@@ -423,8 +822,12 @@ __weak void mmu_setup(void)
  */
 void invalidate_dcache_all(void)
 {
+#ifndef CONFIG_CMO_BY_VA_ONLY
 	__asm_invalidate_dcache_all();
 	__asm_invalidate_l3_dcache();
+#else
+	apply_cmo_to_mappings(invalidate_dcache_range);
+#endif
 }
 
 /*
@@ -434,16 +837,21 @@ void invalidate_dcache_all(void)
  */
 inline void flush_dcache_all(void)
 {
+#ifndef CONFIG_CMO_BY_VA_ONLY
 	int ret;
 
 	__asm_flush_dcache_all();
 	ret = __asm_flush_l3_dcache();
 	if (ret)
-		pr_debug("flushing dcache returns 0x%x\n", ret);
+		debug("flushing dcache returns 0x%x\n", ret);
 	else
-		pr_debug("flushing dcache successfully.\n");
+		debug("flushing dcache successfully.\n");
+#else
+	apply_cmo_to_mappings(flush_dcache_range);
+#endif
 }
 
+#ifndef CONFIG_SYS_DISABLE_DCACHE_OPS
 /*
  * Invalidates range in all levels of D-cache/unified cache
  */
@@ -459,22 +867,36 @@ void flush_dcache_range(unsigned long start, unsigned long stop)
 {
 	__asm_flush_dcache_range(start, stop);
 }
+#else
+void invalidate_dcache_range(unsigned long start, unsigned long stop)
+{
+}
+
+void flush_dcache_range(unsigned long start, unsigned long stop)
+{
+}
+#endif /* CONFIG_SYS_DISABLE_DCACHE_OPS */
 
 void dcache_enable(void)
 {
 	/* The data cache is not active unless the mmu is enabled */
-	if (!(get_sctlr() & CR_M)) {
-		invalidate_dcache_all();
+	if (!mmu_status()) {
 		__asm_invalidate_tlb_all();
 		mmu_setup();
+		mmu_enable();
 	}
 
+	/* Set up page tables only once (it is done also by mmu_setup()) */
+	if (!gd->arch.tlb_fillptr)
+		setup_all_pgtables();
+
+	invalidate_dcache_all();
 	set_sctlr(get_sctlr() | CR_C);
 }
 
 void dcache_disable(void)
 {
-	uint32_t sctlr;
+	unsigned long sctlr;
 
 	sctlr = get_sctlr();
 
@@ -482,9 +904,19 @@ void dcache_disable(void)
 	if (!(sctlr & CR_C))
 		return;
 
+	if (IS_ENABLED(CONFIG_CMO_BY_VA_ONLY)) {
+		/*
+		 * When invalidating by VA, do it *before* turning the MMU
+		 * off, so that at least our stack is coherent.
+		 */
+		flush_dcache_all();
+	}
+
 	set_sctlr(sctlr & ~(CR_C|CR_M));
 
-	flush_dcache_all();
+	if (!IS_ENABLED(CONFIG_CMO_BY_VA_ONLY))
+		flush_dcache_all();
+
 	__asm_invalidate_tlb_all();
 }
 
@@ -520,13 +952,13 @@ static u64 set_one_region(u64 start, u64 size, u64 attrs, bool flag, int level)
 			*pte &= ~PMD_ATTRINDX_MASK;
 			*pte |= attrs & PMD_ATTRINDX_MASK;
 		}
-		pr_debug("Set attrs=%llx pte=%p level=%d\n", attrs, pte, level);
+		debug("Set attrs=%llx pte=%p level=%d\n", attrs, pte, level);
 
 		return levelsize;
 	}
 
 	/* Unaligned or doesn't fit, maybe split block into table */
-	pr_debug("addr=%llx level=%d pte=%p (%llx)\n", start, level, pte, *pte);
+	debug("addr=%llx level=%d pte=%p (%llx)\n", start, level, pte, *pte);
 
 	/* Maybe we need to split the block into a table */
 	if (pte_type(pte) == PTE_TYPE_BLOCK)
@@ -544,11 +976,11 @@ static u64 set_one_region(u64 start, u64 size, u64 attrs, bool flag, int level)
 void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 				     enum dcache_option option)
 {
-	u64 attrs = PMD_ATTRINDX(option);
+	u64 attrs = PMD_ATTRINDX(option >> 2);
 	u64 real_start = start;
 	u64 real_size = size;
 
-	pr_debug("start=%lx size=%lx\n", (ulong)start, (ulong)size);
+	debug("start=%lx size=%lx\n", (ulong)start, (ulong)size);
 
 	if (!gd->arch.tlb_emerg)
 		panic("Emergency page table not setup.");
@@ -591,6 +1023,34 @@ void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 	flush_dcache_range(real_start, real_start + real_size);
 }
 
+void mmu_change_region_attr_nobreak(phys_addr_t addr, size_t siz, u64 attrs)
+{
+	int level;
+	u64 r, size, start;
+
+	/*
+	 * Loop through the address range until we find a page granule that fits
+	 * our alignment constraints and set the new permissions
+	 */
+	start = addr;
+	size = siz;
+	while (size > 0) {
+		for (level = 1; level < 4; level++) {
+			/* Set PTE to new attributes */
+			r = set_one_region(start, size, attrs, true, level);
+			if (r) {
+				/* PTE successfully updated */
+				size -= r;
+				start += r;
+				break;
+			}
+		}
+	}
+	flush_dcache_range(gd->arch.tlb_addr,
+			   gd->arch.tlb_addr + gd->arch.tlb_size);
+	__asm_invalidate_tlb_all();
+}
+
 /*
  * Modify MMU table for a region with updated PXN/UXN/Memory type/valid bits.
  * The procecess is break-before-make. The target region will be marked as
@@ -625,39 +1085,60 @@ void mmu_change_region_attr(phys_addr_t addr, size_t siz, u64 attrs)
 			   gd->arch.tlb_addr + gd->arch.tlb_size);
 	__asm_invalidate_tlb_all();
 
-	/*
-	 * Loop through the address range until we find a page granule that fits
-	 * our alignment constraints, then set it to the new cache attributes
-	 */
-	start = addr;
-	size = siz;
-	while (size > 0) {
-		for (level = 1; level < 4; level++) {
-			/* Set PTE to new attributes */
-			r = set_one_region(start, size, attrs, true, level);
-			if (r) {
-				/* PTE successfully updated */
-				size -= r;
-				start += r;
-				break;
-			}
-		}
-	}
-	flush_dcache_range(gd->arch.tlb_addr,
-			   gd->arch.tlb_addr + gd->arch.tlb_size);
-	__asm_invalidate_tlb_all();
+	mmu_change_region_attr_nobreak(addr, siz, attrs);
 }
 
-#else	/* CONFIG_SYS_DCACHE_OFF */
-u64 get_page_table_size(void)
+int pgprot_set_attrs(phys_addr_t addr, size_t size, enum pgprot_attrs perm)
 {
-	return SZ_64K;
+	u64 attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_INNER_SHARE | PTE_TYPE_VALID;
+
+	switch (perm) {
+	case MMU_ATTR_RO:
+		/*
+		 * get_effective_el() will return 1 if
+		 * - Running in EL1 so we assume an EL1 translation regime
+		 *   with HCR_EL2.{NV, NV1} != {1,1}
+		 * - Running in EL2 with HCR_EL2.E2H = 1 so we assume an
+		 *   EL2&0 translation regime. Since we don't have accesses
+		 *   from EL0 we don't have to check HCR_EL2.TGE
+		 *
+		 * Both of these requires PXN to be set
+		 */
+		if (get_effective_el() == 1)
+			attrs |= PTE_BLOCK_PXN | PTE_BLOCK_UXN | PTE_BLOCK_RO;
+		else
+			attrs |= PTE_BLOCK_UXN | PTE_BLOCK_RO;
+		break;
+	case MMU_ATTR_RX:
+		attrs |= PTE_BLOCK_RO;
+		break;
+	case MMU_ATTR_RW:
+		if (get_effective_el() == 1)
+			attrs |= PTE_BLOCK_PXN | PTE_BLOCK_UXN;
+		else
+			attrs |= PTE_BLOCK_UXN;
+		break;
+	default:
+		log_err("Unknown attribute %d\n", perm);
+		return -EINVAL;
+	}
+
+	mmu_change_region_attr_nobreak(addr, size, attrs);
+
+	return 0;
 }
+
+#else	/* !CONFIG_IS_ENABLED(SYS_DCACHE_OFF) */
+
 /*
  * For SPL builds, we may want to not have dcache enabled. Any real U-Boot
  * running however really wants to have dcache and the MMU active. Check that
  * everything is sane and give the developer a hint if it isn't.
  */
+#ifndef CONFIG_XPL_BUILD
+#error Please describe your MMU layout in CONFIG_SYS_MEM_MAP and enable dcache.
+#endif
+
 void invalidate_dcache_all(void)
 {
 }
@@ -684,9 +1165,9 @@ void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 {
 }
 
-#endif	/* CONFIG_SYS_DCACHE_OFF */
+#endif	/* !CONFIG_IS_ENABLED(SYS_DCACHE_OFF) */
 
-#ifndef CONFIG_SYS_ICACHE_OFF
+#if !CONFIG_IS_ENABLED(SYS_ICACHE_OFF)
 
 void icache_enable(void)
 {
@@ -710,7 +1191,7 @@ void invalidate_icache_all(void)
 	__asm_invalidate_l3_icache();
 }
 
-#else	/* CONFIG_SYS_ICACHE_OFF */
+#else	/* !CONFIG_IS_ENABLED(SYS_ICACHE_OFF) */
 
 void icache_enable(void)
 {
@@ -729,7 +1210,12 @@ void invalidate_icache_all(void)
 {
 }
 
-#endif	/* CONFIG_SYS_ICACHE_OFF */
+#endif	/* !CONFIG_IS_ENABLED(SYS_ICACHE_OFF) */
+
+int mmu_status(void)
+{
+	return (get_sctlr() & CR_M) != 0;
+}
 
 /*
  * Enable dCache & iCache, whether cache is actually enabled
@@ -739,4 +1225,9 @@ void __weak enable_caches(void)
 {
 	icache_enable();
 	dcache_enable();
+}
+
+void arch_dump_mem_attrs(void)
+{
+	dump_pagetable(gd->arch.tlb_addr, get_tcr(NULL, NULL));
 }

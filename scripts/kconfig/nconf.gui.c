@@ -6,6 +6,7 @@
  *
  */
 #include "nconf.h"
+#include "lkc.h"
 
 /* a list of all the different widgets we use */
 attributes_t attributes[ATTR_MAX+1] = {0};
@@ -129,7 +130,7 @@ static void no_colors_theme(void)
 	mkattrn(FUNCTION_TEXT, A_REVERSE);
 }
 
-void set_colors()
+void set_colors(void)
 {
 	start_color();
 	use_default_colors();
@@ -142,7 +143,6 @@ void set_colors()
 	}
 }
 
-
 /* this changes the windows attributes !!! */
 void print_in_middle(WINDOW *win,
 		int starty,
@@ -152,7 +152,6 @@ void print_in_middle(WINDOW *win,
 		chtype color)
 {      int length, x, y;
 	float temp;
-
 
 	if (win == NULL)
 		win = stdscr;
@@ -192,7 +191,7 @@ const char *get_line(const char *text, int line_no)
 	int lines = 0;
 
 	if (!text)
-		return 0;
+		return NULL;
 
 	for (i = 0; text[i] != '\0' && lines < line_no; i++)
 		if (text[i] == '\n')
@@ -255,7 +254,6 @@ int btn_dialog(WINDOW *main_window, const char *msg, int btn_num, ...)
 	int i, x, y;
 	int res = -1;
 
-
 	va_start(ap, btn_num);
 	for (i = 0; i < btn_num; i++) {
 		btn = va_arg(ap, char *);
@@ -278,7 +276,6 @@ int btn_dialog(WINDOW *main_window, const char *msg, int btn_num, ...)
 	/* place dialog in middle of screen */
 	y = (getmaxy(stdscr)-(msg_lines+4))/2;
 	x = (getmaxx(stdscr)-(total_width+4))/2;
-
 
 	/* create the windows */
 	if (btn_num > 0)
@@ -313,7 +310,6 @@ int btn_dialog(WINDOW *main_window, const char *msg, int btn_num, ...)
 	menu_opts_on(menu, O_NONCYCLIC);
 	set_menu_mark(menu, "");
 	post_menu(menu);
-
 
 	touchwin(win);
 	refresh_all_windows(main_window);
@@ -374,7 +370,7 @@ int dialog_inputbox(WINDOW *main_window,
 
 	if (strlen(init)+1 > *result_len) {
 		*result_len = strlen(init)+1;
-		*resultp = result = realloc(result, *result_len);
+		*resultp = result = xrealloc(result, *result_len);
 	}
 
 	/* find the widest line of msg: */

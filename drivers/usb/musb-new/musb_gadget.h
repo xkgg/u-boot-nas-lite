@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * MUSB OTG driver peripheral defines
  *
  * Copyright 2005 Mentor Graphics Corporation
  * Copyright (C) 2005-2006 by Texas Instruments
  * Copyright (C) 2006-2007 Nokia Corporation
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #ifndef __MUSB_GADGET_H
@@ -43,7 +42,6 @@ static inline struct musb_request *to_musb_request(struct usb_request *req)
 extern struct usb_request *
 musb_alloc_request(struct usb_ep *ep, gfp_t gfp_flags);
 extern void musb_free_request(struct usb_ep *ep, struct usb_request *req);
-
 
 /*
  * struct musb_ep - peripheral side view of endpoint rx or tx side

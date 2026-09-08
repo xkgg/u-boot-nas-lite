@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2001, 2002, 2003
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  * Keith Outwater, keith_outwater@mvis.com`
  * Steven Scholz, steven.scholz@imc-berlin.de
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -14,16 +13,19 @@
  * based on ds1337.c
  */
 
-#include <common.h>
+#include <config.h>
 #include <command.h>
 #include <dm.h>
+#include <log.h>
 #include <rtc.h>
 #include <i2c.h>
 
 enum ds_type {
 	ds_1307,
 	ds_1337,
+	ds_1339,
 	ds_1340,
+	m41t11,
 	mcp794xx,
 };
 
@@ -39,194 +41,33 @@ enum ds_type {
 #define RTC_YR_REG_ADDR		0x06
 #define RTC_CTL_REG_ADDR	0x07
 
+#define DS1337_CTL_REG_ADDR	0x0e
+#define DS1337_STAT_REG_ADDR	0x0f
+#define DS1340_STAT_REG_ADDR	0x09
+
+#define RTC_STAT_BIT_OSF	0x80
+
 #define RTC_SEC_BIT_CH		0x80	/* Clock Halt (in Register 0)   */
 
+/* DS1307-specific bits */
 #define RTC_CTL_BIT_RS0		0x01	/* Rate select 0                */
 #define RTC_CTL_BIT_RS1		0x02	/* Rate select 1                */
 #define RTC_CTL_BIT_SQWE	0x10	/* Square Wave Enable           */
 #define RTC_CTL_BIT_OUT		0x80	/* Output Control               */
 
+/* DS1337-specific bits */
+#define DS1337_CTL_BIT_RS1	0x08	/* Rate select 1                */
+#define DS1337_CTL_BIT_RS2	0x10	/* Rate select 2                */
+#define DS1337_CTL_BIT_EOSC	0x80	/* Enable Oscillator            */
+
+/* DS1340-specific bits */
+#define DS1340_SEC_BIT_EOSC	0x80	/* Enable Oscillator            */
+#define DS1340_CTL_BIT_OUT	0x80	/* Output Control               */
+
 /* MCP7941X-specific bits */
 #define MCP7941X_BIT_ST		0x80
 #define MCP7941X_BIT_VBATEN	0x08
 
-#ifndef CONFIG_DM_RTC
-
-#if defined(CONFIG_CMD_DATE)
-
-/*---------------------------------------------------------------------*/
-#undef DEBUG_RTC
-
-#ifdef DEBUG_RTC
-#define DEBUGR(fmt, args...) printf(fmt, ##args)
-#else
-#define DEBUGR(fmt, args...)
-#endif
-/*---------------------------------------------------------------------*/
-
-#ifndef CONFIG_SYS_I2C_RTC_ADDR
-# define CONFIG_SYS_I2C_RTC_ADDR	0x68
-#endif
-
-#if defined(CONFIG_RTC_DS1307) && (CONFIG_SYS_I2C_SPEED > 100000)
-# error The DS1307 is specified only up to 100kHz!
-#endif
-
-static uchar rtc_read (uchar reg);
-static void rtc_write (uchar reg, uchar val);
-
-/*
- * Get the current time from the RTC
- */
-int rtc_get (struct rtc_time *tmp)
-{
-	int rel = 0;
-	uchar sec, min, hour, mday, wday, mon, year;
-
-#ifdef CONFIG_RTC_MCP79411
-read_rtc:
-#endif
-	sec = rtc_read (RTC_SEC_REG_ADDR);
-	min = rtc_read (RTC_MIN_REG_ADDR);
-	hour = rtc_read (RTC_HR_REG_ADDR);
-	wday = rtc_read (RTC_DAY_REG_ADDR);
-	mday = rtc_read (RTC_DATE_REG_ADDR);
-	mon = rtc_read (RTC_MON_REG_ADDR);
-	year = rtc_read (RTC_YR_REG_ADDR);
-
-	DEBUGR ("Get RTC year: %02x mon: %02x mday: %02x wday: %02x "
-		"hr: %02x min: %02x sec: %02x\n",
-		year, mon, mday, wday, hour, min, sec);
-
-#ifdef CONFIG_RTC_DS1307
-	if (sec & RTC_SEC_BIT_CH) {
-		printf ("### Warning: RTC oscillator has stopped\n");
-		/* clear the CH flag */
-		rtc_write (RTC_SEC_REG_ADDR,
-			   rtc_read (RTC_SEC_REG_ADDR) & ~RTC_SEC_BIT_CH);
-		rel = -1;
-	}
-#endif
-
-#ifdef CONFIG_RTC_MCP79411
-	/* make sure that the backup battery is enabled */
-	if (!(wday & MCP7941X_BIT_VBATEN)) {
-		rtc_write(RTC_DAY_REG_ADDR,
-			  wday | MCP7941X_BIT_VBATEN);
-	}
-
-	/* clock halted?  turn it on, so clock can tick. */
-	if (!(sec & MCP7941X_BIT_ST)) {
-		rtc_write(RTC_SEC_REG_ADDR, MCP7941X_BIT_ST);
-		printf("Started RTC\n");
-		goto read_rtc;
-	}
-#endif
-
-
-	tmp->tm_sec  = bcd2bin (sec & 0x7F);
-	tmp->tm_min  = bcd2bin (min & 0x7F);
-	tmp->tm_hour = bcd2bin (hour & 0x3F);
-	tmp->tm_mday = bcd2bin (mday & 0x3F);
-	tmp->tm_mon  = bcd2bin (mon & 0x1F);
-	tmp->tm_year = bcd2bin (year) + ( bcd2bin (year) >= 70 ? 1900 : 2000);
-	tmp->tm_wday = bcd2bin ((wday - 1) & 0x07);
-	tmp->tm_yday = 0;
-	tmp->tm_isdst= 0;
-
-	DEBUGR ("Get DATE: %4d-%02d-%02d (wday=%d)  TIME: %2d:%02d:%02d\n",
-		tmp->tm_year, tmp->tm_mon, tmp->tm_mday, tmp->tm_wday,
-		tmp->tm_hour, tmp->tm_min, tmp->tm_sec);
-
-	return rel;
-}
-
-
-/*
- * Set the RTC
- */
-int rtc_set (struct rtc_time *tmp)
-{
-	DEBUGR ("Set DATE: %4d-%02d-%02d (wday=%d)  TIME: %2d:%02d:%02d\n",
-		tmp->tm_year, tmp->tm_mon, tmp->tm_mday, tmp->tm_wday,
-		tmp->tm_hour, tmp->tm_min, tmp->tm_sec);
-
-	if (tmp->tm_year < 1970 || tmp->tm_year > 2069)
-		printf("WARNING: year should be between 1970 and 2069!\n");
-
-	rtc_write (RTC_YR_REG_ADDR, bin2bcd (tmp->tm_year % 100));
-	rtc_write (RTC_MON_REG_ADDR, bin2bcd (tmp->tm_mon));
-#ifdef CONFIG_RTC_MCP79411
-	rtc_write (RTC_DAY_REG_ADDR,
-		   bin2bcd (tmp->tm_wday + 1) | MCP7941X_BIT_VBATEN);
-#else
-	rtc_write (RTC_DAY_REG_ADDR, bin2bcd (tmp->tm_wday + 1));
-#endif
-	rtc_write (RTC_DATE_REG_ADDR, bin2bcd (tmp->tm_mday));
-	rtc_write (RTC_HR_REG_ADDR, bin2bcd (tmp->tm_hour));
-	rtc_write (RTC_MIN_REG_ADDR, bin2bcd (tmp->tm_min));
-#ifdef CONFIG_RTC_MCP79411
-	rtc_write (RTC_SEC_REG_ADDR, bin2bcd (tmp->tm_sec) | MCP7941X_BIT_ST);
-#else
-	rtc_write (RTC_SEC_REG_ADDR, bin2bcd (tmp->tm_sec));
-#endif
-
-	return 0;
-}
-
-
-/*
- * Reset the RTC. We setting the date back to 1970-01-01.
- * We also enable the oscillator output on the SQW/OUT pin and program
- * it for 32,768 Hz output. Note that according to the datasheet, turning
- * on the square wave output increases the current drain on the backup
- * battery to something between 480nA and 800nA.
- */
-void rtc_reset (void)
-{
-	struct rtc_time tmp;
-
-	rtc_write (RTC_SEC_REG_ADDR, 0x00);	/* clearing Clock Halt	*/
-	rtc_write (RTC_CTL_REG_ADDR, RTC_CTL_BIT_SQWE | RTC_CTL_BIT_RS1 | RTC_CTL_BIT_RS0);
-
-	tmp.tm_year = 1970;
-	tmp.tm_mon = 1;
-	tmp.tm_mday= 1;
-	tmp.tm_hour = 0;
-	tmp.tm_min = 0;
-	tmp.tm_sec = 0;
-
-	rtc_set(&tmp);
-
-	printf ( "RTC:   %4d-%02d-%02d %2d:%02d:%02d UTC\n",
-		tmp.tm_year, tmp.tm_mon, tmp.tm_mday,
-		tmp.tm_hour, tmp.tm_min, tmp.tm_sec);
-
-	return;
-}
-
-
-/*
- * Helper functions
- */
-
-static
-uchar rtc_read (uchar reg)
-{
-	return (i2c_reg_read (CONFIG_SYS_I2C_RTC_ADDR, reg));
-}
-
-
-static void rtc_write (uchar reg, uchar val)
-{
-	i2c_reg_write (CONFIG_SYS_I2C_RTC_ADDR, reg, val);
-}
-
-#endif /* CONFIG_CMD_DATE*/
-
-#endif /* !CONFIG_DM_RTC */
-
-#ifdef CONFIG_DM_RTC
 static int ds1307_rtc_set(struct udevice *dev, const struct rtc_time *tm)
 {
 	int ret;
@@ -257,6 +98,11 @@ static int ds1307_rtc_set(struct udevice *dev, const struct rtc_time *tm)
 	if (ret < 0)
 		return ret;
 
+	if (type == ds_1337) {
+		/* Ensure oscillator is enabled */
+		dm_i2c_reg_write(dev, DS1337_CTL_REG_ADDR, 0);
+	}
+
 	return 0;
 }
 
@@ -266,36 +112,19 @@ static int ds1307_rtc_get(struct udevice *dev, struct rtc_time *tm)
 	uchar buf[7];
 	enum ds_type type = dev_get_driver_data(dev);
 
-read_rtc:
 	ret = dm_i2c_read(dev, 0, buf, sizeof(buf));
 	if (ret < 0)
 		return ret;
 
-	if (type == ds_1307) {
-		if (buf[RTC_SEC_REG_ADDR] & RTC_SEC_BIT_CH) {
+	if (type == ds_1337 || type == ds_1340) {
+		uint reg = (type == ds_1337) ? DS1337_STAT_REG_ADDR :
+					       DS1340_STAT_REG_ADDR;
+		int status = dm_i2c_reg_read(dev, reg);
+
+		if (status >= 0 && (status & RTC_STAT_BIT_OSF)) {
 			printf("### Warning: RTC oscillator has stopped\n");
-			/* clear the CH flag */
-			buf[RTC_SEC_REG_ADDR] &= ~RTC_SEC_BIT_CH;
-			dm_i2c_reg_write(dev, RTC_SEC_REG_ADDR,
-					 buf[RTC_SEC_REG_ADDR]);
-			return -1;
-		}
-	}
-
-	if (type == mcp794xx) {
-		/* make sure that the backup battery is enabled */
-		if (!(buf[RTC_DAY_REG_ADDR] & MCP7941X_BIT_VBATEN)) {
-			dm_i2c_reg_write(dev, RTC_DAY_REG_ADDR,
-					 buf[RTC_DAY_REG_ADDR] |
-					 MCP7941X_BIT_VBATEN);
-		}
-
-		/* clock halted?  turn it on, so clock can tick. */
-		if (!(buf[RTC_SEC_REG_ADDR] & MCP7941X_BIT_ST)) {
-			dm_i2c_reg_write(dev, RTC_SEC_REG_ADDR,
-					 MCP7941X_BIT_ST);
-			printf("Started RTC\n");
-			goto read_rtc;
+			/* clear the OSF flag */
+			dm_i2c_reg_write(dev, reg, status & ~RTC_STAT_BIT_OSF);
 		}
 	}
 
@@ -321,34 +150,37 @@ read_rtc:
 static int ds1307_rtc_reset(struct udevice *dev)
 {
 	int ret;
-	struct rtc_time tmp = {
-		.tm_year = 1970,
-		.tm_mon = 1,
-		.tm_mday = 1,
-		.tm_hour = 0,
-		.tm_min = 0,
-		.tm_sec = 0,
-	};
+	enum ds_type type = dev_get_driver_data(dev);
 
-	/* clear Clock Halt */
+	/*
+	 * reset clock/oscillator in the seconds register:
+	 * on DS1307 bit 7 enables Clock Halt (CH),
+	 * on DS1340 bit 7 disables the oscillator (not EOSC)
+	 * on MCP794xx bit 7 enables Start Oscillator (ST)
+	 */
 	ret = dm_i2c_reg_write(dev, RTC_SEC_REG_ADDR, 0x00);
 	if (ret < 0)
 		return ret;
-	ret = dm_i2c_reg_write(dev, RTC_CTL_REG_ADDR,
-			       RTC_CTL_BIT_SQWE | RTC_CTL_BIT_RS1 |
-			       RTC_CTL_BIT_RS0);
-	if (ret < 0)
-		return ret;
 
-	ret = ds1307_rtc_set(dev, &tmp);
-	if (ret < 0)
-		return ret;
+	if (type == ds_1307) {
+		/* Write control register in order to enable square-wave
+		 * output (SQWE) and set a default rate of 32.768kHz (RS1|RS0).
+		 */
+		ret = dm_i2c_reg_write(dev, RTC_CTL_REG_ADDR,
+				       RTC_CTL_BIT_SQWE | RTC_CTL_BIT_RS1 |
+				       RTC_CTL_BIT_RS0);
+	} else if (type == ds_1337) {
+		/* Write control register in order to enable oscillator output
+		 * (not EOSC) and set a default rate of 32.768kHz (RS2|RS1).
+		 */
+		ret = dm_i2c_reg_write(dev, DS1337_CTL_REG_ADDR,
+				       DS1337_CTL_BIT_RS2 | DS1337_CTL_BIT_RS1);
+	} else if (type == ds_1340 || type == mcp794xx || type == m41t11) {
+		/* Reset clock calibration, frequency test and output level. */
+		ret = dm_i2c_reg_write(dev, RTC_CTL_REG_ADDR, 0x00);
+	}
 
-	debug("RTC:   %4d-%02d-%02d %2d:%02d:%02d UTC\n",
-	      tmp.tm_year, tmp.tm_mon, tmp.tm_mday,
-	      tmp.tm_hour, tmp.tm_min, tmp.tm_sec);
-
-	return 0;
+	return ret;
 }
 
 static int ds1307_probe(struct udevice *dev)
@@ -368,8 +200,11 @@ static const struct rtc_ops ds1307_rtc_ops = {
 static const struct udevice_id ds1307_rtc_ids[] = {
 	{ .compatible = "dallas,ds1307", .data = ds_1307 },
 	{ .compatible = "dallas,ds1337", .data = ds_1337 },
+	{ .compatible = "dallas,ds1339", .data = ds_1339 },
 	{ .compatible = "dallas,ds1340", .data = ds_1340 },
+	{ .compatible = "microchip,mcp7940x", .data = mcp794xx },
 	{ .compatible = "microchip,mcp7941x", .data = mcp794xx },
+	{ .compatible = "st,m41t11", .data = m41t11 },
 	{ }
 };
 
@@ -380,4 +215,3 @@ U_BOOT_DRIVER(rtc_ds1307) = {
 	.of_match = ds1307_rtc_ids,
 	.ops	= &ds1307_rtc_ops,
 };
-#endif /* CONFIG_DM_RTC */

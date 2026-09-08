@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Samsung Electronics
  * Donghwa Lee <dh09.lee@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <mach/cpu.h>
 #include <asm/io.h>
 #include <asm/arch/power.h>
 
@@ -20,7 +19,6 @@ static void exynos4_mipi_phy_control(unsigned int dev_index,
 		addr = (unsigned int)&pmu->mipi_phy0_control;
 	else
 		addr = (unsigned int)&pmu->mipi_phy1_control;
-
 
 	cfg = readl(addr);
 	if (enable)
@@ -125,7 +123,7 @@ static void exynos5420_set_usbdev_phy_ctrl(unsigned int enable)
 void set_usbdrd_phy_ctrl(unsigned int enable)
 {
 	if (cpu_is_exynos5()) {
-		if (proid_is_exynos5420() || proid_is_exynos5422())
+		if (proid_is_exynos542x())
 			exynos5420_set_usbdev_phy_ctrl(enable);
 		else
 			exynos5_set_usbdrd_phy_ctrl(enable);
@@ -174,7 +172,6 @@ void set_ps_hold_ctrl(void)
 	if (cpu_is_exynos5())
 		exynos5_set_ps_hold_ctrl();
 }
-
 
 static void exynos5_set_xclkout(void)
 {

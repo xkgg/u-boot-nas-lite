@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _QUARK_MSG_PORT_H_
@@ -34,6 +33,8 @@
 #define MSG_BYTE_ENABLE		0xf0
 
 #ifndef __ASSEMBLY__
+
+#include <linux/types.h>
 
 /**
  * msg_port_setup - set up the message port control register

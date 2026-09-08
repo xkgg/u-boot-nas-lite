@@ -1,15 +1,21 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * sun4i, sun5i and sun7i clock register definitions
  *
  * (C) Copyright 2007-2011
  * Allwinner Technology Co., Ltd. <www.allwinnertech.com>
  * Tom Cubie <tangliang@allwinnertech.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _SUNXI_CLOCK_SUN4I_H
 #define _SUNXI_CLOCK_SUN4I_H
+
+#define CCU_AHB_GATE0		0x60
+#define CCU_NAND0_CLK_CFG	0x80
+#define CCU_MMC0_CLK_CFG	0x88
+#define CCU_MMC1_CLK_CFG	0x8c
+#define CCU_MMC2_CLK_CFG	0x90
+#define CCU_MMC3_CLK_CFG	0x94
 
 struct sunxi_ccm_reg {
 	u32 pll1_cfg;		/* 0x00 pll1 control */

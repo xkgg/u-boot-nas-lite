@@ -1,17 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * (C) Copyright 2018 Rockchip Electronics Co., Ltd
- *
- * SPDX-License-Identifier:	GPL-2.0
+ * (C) Copyright 2018-2019 Rockchip Electronics Co., Ltd
  */
- #include <common.h>
 #include <bitfield.h>
 #include <clk-uclass.h>
 #include <dm.h>
 #include <errno.h>
-#include <asm/io.h>
-#include <asm/arch/clock.h>
-#include <asm/arch/hardware.h>
+#include <log.h>
+#include <asm/arch-rockchip/clock.h>
+#include <asm/arch-rockchip/hardware.h>
 #include <div64.h>
+#include <linux/delay.h>
 
 static struct rockchip_pll_rate_table rockchip_auto_table;
 
@@ -30,19 +29,20 @@ static struct rockchip_pll_rate_table rockchip_auto_table;
 #define RK3036_PLLCON1_DSMPD_SHIFT		12
 #define RK3036_PLLCON2_FRAC_MASK		0xffffff
 #define RK3036_PLLCON2_FRAC_SHIFT		0
-#define RK3036_PLLCON1_PWRDOWN_SHIT		13
+#define RK3036_PLLCON1_PWRDOWN_SHIFT		13
 
 #define MHZ		1000000
 #define KHZ		1000
+enum {
+	OSC_HZ			= 24 * 1000000,
+	VCO_MAX_HZ	= 3200U * 1000000,
+	VCO_MIN_HZ	= 800 * 1000000,
+	OUTPUT_MAX_HZ	= 3200U * 1000000,
+	OUTPUT_MIN_HZ	= 24 * 1000000,
+};
 
-#define OSC_HZ			(24UL * MHZ)
-#define VCO_MAX_HZ		(3200UL * MHZ)
-#define VCO_MIN_HZ		(800UL * MHZ)
-#define OUTPUT_MAX_HZ		(3200UL * MHZ)
-#define OUTPUT_MIN_HZ		(24UL * MHZ)
-#define MIN_FOUTVCO_FREQ	(800UL * MHZ)
-#define MAX_FOUTVCO_FREQ	(2000UL * MHZ)
-
+#define MIN_FOUTVCO_FREQ	(800 * MHZ)
+#define MAX_FOUTVCO_FREQ	(2000 * MHZ)
 #define RK3588_VCO_MIN_HZ	(2250UL * MHZ)
 #define RK3588_VCO_MAX_HZ	(4500UL * MHZ)
 #define RK3588_FOUT_MIN_HZ	(37UL * MHZ)
@@ -166,13 +166,71 @@ rockchip_pll_clk_set_by_auto(ulong fin_hz,
 	return rate_table;
 }
 
+static u32
+rockchip_rk3588_pll_k_get(u32 m, u32 p, u32 s, u64 fin_hz, u64 fvco)
+{
+	u64 fref, fout, ffrac;
+	u32 k = 0;
+
+	fref = fin_hz / p;
+	ffrac = fvco - (m * fref);
+	fout = ffrac * 65536;
+	k = fout / fref;
+	if (k > 32767) {
+		fref = fin_hz / p;
+		ffrac = ((m + 1) * fref) - fvco;
+		fout = ffrac * 65536;
+		k = ((fout * 10 / fref) + 7) / 10;
+		if (k > 32767)
+			k = 0;
+		else
+			k = ~k + 1;
+	}
+	return k;
+}
+
+static struct rockchip_pll_rate_table *
+rockchip_rk3588_pll_frac_by_auto(unsigned long fin_hz, unsigned long fout_hz)
+{
+	struct rockchip_pll_rate_table *rate_table = &rockchip_auto_table;
+	u32 p, m, s, k;
+	u64 fvco;
+
+	for (s = 0; s <= 6; s++) {
+		fvco = (u64)fout_hz << s;
+		if (fvco < RK3588_VCO_MIN_HZ || fvco > RK3588_VCO_MAX_HZ)
+			continue;
+		for (p = 1; p <= 4; p++) {
+			for (m = 64; m <= 1023; m++) {
+				if ((fvco >= m * fin_hz / p) &&
+				    (fvco < (m + 1) * fin_hz / p)) {
+					k = rockchip_rk3588_pll_k_get(m, p, s,
+								      fin_hz,
+								      fvco);
+					if (!k)
+						continue;
+					rate_table->p = p;
+					rate_table->s = s;
+					rate_table->k = k;
+					if (k > 32767)
+						rate_table->m = m + 1;
+					else
+						rate_table->m = m;
+					return rate_table;
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
 static struct rockchip_pll_rate_table *
 rk3588_pll_clk_set_by_auto(unsigned long fin_hz,
 			   unsigned long fout_hz)
 {
 	struct rockchip_pll_rate_table *rate_table = &rockchip_auto_table;
 	u32 p, m, s;
-	ulong fvco, fref, fout, ffrac;
+	ulong fvco;
 
 	if (fin_hz == 0 || fout_hz == 0 || fout_hz == fin_hz)
 		return NULL;
@@ -200,27 +258,12 @@ rk3588_pll_clk_set_by_auto(unsigned long fin_hz,
 		}
 		pr_err("CANNOT FIND Fout by auto,fout = %lu\n", fout_hz);
 	} else {
-		for (s = 0; s <= 6; s++) {
-			fvco = fout_hz << s;
-			if (fvco < RK3588_VCO_MIN_HZ ||
-			    fvco > RK3588_VCO_MAX_HZ)
-				continue;
-			for (p = 1; p <= 4; p++) {
-				for (m = 64; m <= 1023; m++) {
-					if ((fvco >= m * fin_hz / p) && (fvco < (m + 1) * fin_hz / p)) {
-						rate_table->p = p;
-						rate_table->m = m;
-						rate_table->s = s;
-						fref = fin_hz / p;
-						ffrac = fvco - (m * fref);
-						fout = ffrac * 65536;
-						rate_table->k = fout / fref;
-						return rate_table;
-					}
-				}
-			}
-		}
-		pr_err("CANNOT FIND Fout by auto,fout = %lu\n", fout_hz);
+		rate_table = rockchip_rk3588_pll_frac_by_auto(fin_hz, fout_hz);
+		if (!rate_table)
+			pr_err("CANNOT FIND Fout by auto,fout = %lu\n",
+			       fout_hz);
+		else
+			return rate_table;
 	}
 	return NULL;
 }
@@ -250,7 +293,6 @@ static int rk3036_pll_set_rate(struct rockchip_pll_clock *pll,
 			       ulong drate)
 {
 	const struct rockchip_pll_rate_table *rate;
-	int timeout = 100;
 
 	rate = rockchip_get_pll_settings(pll, drate);
 	if (!rate) {
@@ -267,13 +309,15 @@ static int rk3036_pll_set_rate(struct rockchip_pll_clock *pll,
 	 * When power on or changing PLL setting,
 	 * we must force PLL into slow mode to ensure output stable clock.
 	 */
-	rk_clrsetreg(base + pll->mode_offset,
-		     pll->mode_mask << pll->mode_shift,
-		     RKCLK_PLL_MODE_SLOW << pll->mode_shift);
+	if (!(pll->pll_flags & ROCKCHIP_PLL_FIXED_MODE)) {
+		rk_clrsetreg(base + pll->mode_offset,
+			     pll->mode_mask << pll->mode_shift,
+			     RKCLK_PLL_MODE_SLOW << pll->mode_shift);
+	}
 
 	/* Power down */
 	rk_setreg(base + pll->con_offset + 0x4,
-		  1 << RK3036_PLLCON1_PWRDOWN_SHIT);
+		  1 << RK3036_PLLCON1_PWRDOWN_SHIFT);
 
 	rk_clrsetreg(base + pll->con_offset,
 		     (RK3036_PLLCON0_POSTDIV1_MASK |
@@ -297,19 +341,17 @@ static int rk3036_pll_set_rate(struct rockchip_pll_clock *pll,
 
 	/* Power Up */
 	rk_clrreg(base + pll->con_offset + 0x4,
-		  1 << RK3036_PLLCON1_PWRDOWN_SHIT);
+		  1 << RK3036_PLLCON1_PWRDOWN_SHIFT);
 
 	/* waiting for pll lock */
-	while ((timeout > 0) && !(readl(base + pll->con_offset + 0x4) & (1 << pll->lock_shift))) {
+	while (!(readl(base + pll->con_offset + 0x4) & (1 << pll->lock_shift)))
 		udelay(1);
-		timeout--;
+
+	if (!(pll->pll_flags & ROCKCHIP_PLL_FIXED_MODE)) {
+		rk_clrsetreg(base + pll->mode_offset,
+			     pll->mode_mask << pll->mode_shift,
+			     RKCLK_PLL_MODE_NORMAL << pll->mode_shift);
 	}
-
-	if (!(readl(base + pll->con_offset + 0x4) & (1 << pll->lock_shift)))
-		printf("%s: wait pll lock timeout! pll_id=%ld\n", __func__, pll_id);
-
-	rk_clrsetreg(base + pll->mode_offset, pll->mode_mask << pll->mode_shift,
-		     RKCLK_PLL_MODE_NORMAL << pll->mode_shift);
 	debug("PLL at %p: con0=%x con1= %x con2= %x mode= %x\n",
 	      pll, readl(base + pll->con_offset),
 	      readl(base + pll->con_offset + 0x4),
@@ -325,12 +367,18 @@ static ulong rk3036_pll_get_rate(struct rockchip_pll_clock *pll,
 	u32 refdiv, fbdiv, postdiv1, postdiv2, dsmpd, frac;
 	u32 con = 0, shift, mask;
 	ulong rate;
+	int mode;
 
 	con = readl(base + pll->mode_offset);
 	shift = pll->mode_shift;
 	mask = pll->mode_mask << shift;
 
-	switch ((con & mask) >> shift) {
+	if (!(pll->pll_flags & ROCKCHIP_PLL_FIXED_MODE))
+		mode = (con & mask) >> shift;
+	else
+		mode = RKCLK_PLL_MODE_NORMAL;
+
+	switch (mode) {
 	case RKCLK_PLL_MODE_SLOW:
 		return OSC_HZ;
 	case RKCLK_PLL_MODE_NORMAL:
@@ -537,11 +585,22 @@ static ulong rk3588_pll_get_rate(struct rockchip_pll_clock *pll,
 
 		rate = OSC_HZ / p;
 		rate *= m;
-		if (k) {
+		if (k & BIT(15)) {
+			/* fractional mode */
+			u64 frac_rate64;
+
+			k = (~(k - 1)) & RK3588_PLLCON2_K_MASK;
+			frac_rate64 = OSC_HZ * k;
+			postdiv = p;
+			postdiv *= 65536;
+			do_div(frac_rate64, postdiv);
+			rate -= frac_rate64;
+		} else {
 			/* fractional mode */
 			u64 frac_rate64 = OSC_HZ * k;
 
-			postdiv = p * 65536;
+			postdiv = p;
+			postdiv *= 65536;
 			do_div(frac_rate64, postdiv);
 			rate += frac_rate64;
 		}
@@ -624,4 +683,3 @@ rockchip_get_cpu_settings(struct rockchip_cpu_rate_table *cpu_table,
 	else
 		return ps;
 }
-

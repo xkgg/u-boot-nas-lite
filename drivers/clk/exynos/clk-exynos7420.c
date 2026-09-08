@@ -1,20 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Samsung Exynos7420 clock driver.
  * Copyright (C) 2016 Samsung Electronics
  * Thomas Abraham <thomas.ab@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
 #include <errno.h>
 #include <clk-uclass.h>
 #include <asm/io.h>
+#include <div64.h>
 #include <dt-bindings/clock/exynos7420-clk.h>
-#include "clk-pll.h"
 
-DECLARE_GLOBAL_DATA_PTR;
+#define PLL145X_MDIV_SHIFT	16
+#define PLL145X_MDIV_MASK	0x3ff
+#define PLL145X_PDIV_SHIFT	8
+#define PLL145X_PDIV_MASK	0x3f
+#define PLL145X_SDIV_SHIFT	0
+#define PLL145X_SDIV_MASK	0x7
 
 #define DIVIDER(reg, shift, mask)	\
 	(((readl(reg) >> shift) & mask) + 1)
@@ -67,6 +70,22 @@ struct exynos7420_clk_top0_priv {
 	unsigned long sclk_uart2;
 };
 
+static unsigned long pll145x_get_rate(unsigned int *con1,
+				      unsigned long fin_freq)
+{
+	unsigned long pll_con1 = readl(con1);
+	unsigned long mdiv, sdiv, pdiv;
+	u64 fvco = fin_freq;
+
+	mdiv = (pll_con1 >> PLL145X_MDIV_SHIFT) & PLL145X_MDIV_MASK;
+	pdiv = (pll_con1 >> PLL145X_PDIV_SHIFT) & PLL145X_PDIV_MASK;
+	sdiv = (pll_con1 >> PLL145X_SDIV_SHIFT) & PLL145X_SDIV_MASK;
+
+	fvco *= mdiv;
+	do_div(fvco, (pdiv << sdiv));
+	return (unsigned long)fvco;
+}
+
 static ulong exynos7420_topc_get_rate(struct clk *clk)
 {
 	struct exynos7420_clk_topc_priv *priv = dev_get_priv(clk->dev);
@@ -98,7 +117,7 @@ static int exynos7420_clk_topc_probe(struct udevice *dev)
 	fdt_addr_t base;
 	int ret;
 
-	base = devfdt_get_addr(dev);
+	base = dev_read_addr(dev);
 	if (base == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
@@ -152,7 +171,7 @@ static int exynos7420_clk_top0_probe(struct udevice *dev)
 	if (!priv)
 		return -EINVAL;
 
-	base = devfdt_get_addr(dev);
+	base = dev_read_addr(dev);
 	if (base == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
@@ -173,7 +192,7 @@ static int exynos7420_clk_top0_probe(struct udevice *dev)
 static ulong exynos7420_peric1_get_rate(struct clk *clk)
 {
 	struct clk in_clk;
-	unsigned int ret;
+	int ret;
 	unsigned long freq = 0;
 
 	switch (clk->id) {
@@ -202,9 +221,8 @@ U_BOOT_DRIVER(exynos7420_clk_topc) = {
 	.id = UCLASS_CLK,
 	.of_match = exynos7420_clk_topc_compat,
 	.probe = exynos7420_clk_topc_probe,
-	.priv_auto_alloc_size = sizeof(struct exynos7420_clk_topc_priv),
+	.priv_auto	= sizeof(struct exynos7420_clk_topc_priv),
 	.ops = &exynos7420_clk_topc_ops,
-	.flags = DM_FLAG_PRE_RELOC,
 };
 
 static const struct udevice_id exynos7420_clk_top0_compat[] = {
@@ -217,9 +235,8 @@ U_BOOT_DRIVER(exynos7420_clk_top0) = {
 	.id = UCLASS_CLK,
 	.of_match = exynos7420_clk_top0_compat,
 	.probe = exynos7420_clk_top0_probe,
-	.priv_auto_alloc_size = sizeof(struct exynos7420_clk_top0_priv),
+	.priv_auto	= sizeof(struct exynos7420_clk_top0_priv),
 	.ops = &exynos7420_clk_top0_ops,
-	.flags = DM_FLAG_PRE_RELOC,
 };
 
 static const struct udevice_id exynos7420_clk_peric1_compat[] = {
@@ -232,5 +249,4 @@ U_BOOT_DRIVER(exynos7420_clk_peric1) = {
 	.id = UCLASS_CLK,
 	.of_match = exynos7420_clk_peric1_compat,
 	.ops = &exynos7420_clk_peric1_ops,
-	.flags = DM_FLAG_PRE_RELOC,
 };

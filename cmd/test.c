@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2000-2009
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <command.h>
 #include <fs.h>
+#include <log.h>
+#include <slre.h>
+#include <vsprintf.h>
+#include <linux/string.h>
 
 #define OP_INVALID	0
 #define OP_NOT		1
@@ -26,6 +28,7 @@
 #define OP_INT_GT	14
 #define OP_INT_GE	15
 #define OP_FILE_EXISTS	16
+#define OP_REGEX	17
 
 const struct {
 	int arg;
@@ -49,16 +52,48 @@ const struct {
 	{0, "-z", OP_STR_EMPTY, 2},
 	{0, "-n", OP_STR_NEMPTY, 2},
 	{0, "-e", OP_FILE_EXISTS, 4},
+#ifdef CONFIG_REGEX
+	{1, "=~", OP_REGEX, 3},
+#endif
 };
 
-static int do_test(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_test(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	char * const *ap;
 	int i, op, left, adv, expr, last_expr, last_unop, last_binop;
 
-	/* args? */
-	if (argc < 3)
+	if (!strcmp(argv[0], "[")) {
+		if (strcmp(argv[argc - 1], "]")) {
+			printf("[: missing terminating ]\n");
+			return 1;
+		}
+		argc--;
+	}
+
+	/*
+	 * Per POSIX, 'test' with 0 arguments should return 1, while
+	 * 'test <arg>' should be equivalent to 'test -n <arg>',
+	 * i.e. true if and only if <arg> is not empty.
+	 *
+	 * However, due to previous versions of U-Boot unconditionally
+	 * returning false when 'test' was given less than two
+	 * arguments, there are existing scripts that do
+	 *
+	 *   test -n $somevar
+	 *
+	 * (i.e. without properly quoting $somevar) and expecting that
+	 * to return false when $somevar expands to nothing. It is
+	 * quite unlikely that anyone would use the single-argument
+	 * form to test a string for being empty and a possible
+	 * non-empty value for that string to be exactly "-n". So we
+	 * interpret 'test -n' as if it was 'test -n ""'.
+	 */
+	if (argc < 2)
 		return 1;
+
+	if (argc == 2)
+		return !strcmp(argv[1], "") || !strcmp(argv[1], "-n");
 
 #ifdef DEBUG
 	{
@@ -114,32 +149,46 @@ static int do_test(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			expr = strcmp(ap[0], ap[2]) > 0;
 			break;
 		case OP_INT_EQ:
-			expr = simple_strtol(ap[0], NULL, 10) ==
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) ==
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_INT_NEQ:
-			expr = simple_strtol(ap[0], NULL, 10) !=
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) !=
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_INT_LT:
-			expr = simple_strtol(ap[0], NULL, 10) <
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) <
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_INT_LE:
-			expr = simple_strtol(ap[0], NULL, 10) <=
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) <=
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_INT_GT:
-			expr = simple_strtol(ap[0], NULL, 10) >
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) >
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_INT_GE:
-			expr = simple_strtol(ap[0], NULL, 10) >=
-					simple_strtol(ap[2], NULL, 10);
+			expr = simple_strtol(ap[0], NULL, 0) >=
+					simple_strtol(ap[2], NULL, 0);
 			break;
 		case OP_FILE_EXISTS:
 			expr = file_exists(ap[1], ap[2], ap[3], FS_TYPE_ANY);
 			break;
+#ifdef CONFIG_REGEX
+		case OP_REGEX: {
+			struct slre slre;
+
+			if (slre_compile(&slre, ap[2]) == 0) {
+				printf("Error compiling regex: %s\n", slre.err_str);
+				expr = 0;
+				break;
+			}
+
+			expr = slre_match(&slre, ap[0], strlen(ap[0]), NULL);
+			break;
+		}
+#endif
 		}
 
 		switch (op) {
@@ -191,7 +240,19 @@ U_BOOT_CMD(
 	"[args..]"
 );
 
-static int do_false(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+/*
+ * This does not use the U_BOOT_CMD macro as [ can't be used in symbol names
+ */
+ll_entry_declare(struct cmd_tbl, lbracket, cmd) = {
+	"[",	CONFIG_SYS_MAXARGS, cmd_always_repeatable, do_test,
+	"alias for 'test'",
+#ifdef CONFIG_SYS_LONGHELP
+	" <test expression> ]"
+#endif /* CONFIG_SYS_LONGHELP */
+};
+
+static int do_false(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	return 1;
 }
@@ -202,7 +263,8 @@ U_BOOT_CMD(
 	NULL
 );
 
-static int do_true(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_true(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	return 0;
 }

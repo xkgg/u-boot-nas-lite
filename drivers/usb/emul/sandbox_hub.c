@@ -1,22 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
 #include <usb.h>
 #include <dm/device-internal.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 /* We only support up to 8 */
 #define SANDBOX_NUM_PORTS	4
 
-struct sandbox_hub_platdata {
-	struct usb_dev_platdata plat;
+struct sandbox_hub_plat {
+	struct usb_dev_plat plat;
 	int port;	/* Port number (numbered from 0) */
 };
 
@@ -131,9 +128,9 @@ static struct udevice *hub_find_device(struct udevice *hub, int port,
 	for (device_find_first_child(hub, &dev);
 	     dev;
 	     device_find_next_child(&dev)) {
-		struct sandbox_hub_platdata *plat;
+		struct sandbox_hub_plat *plat;
 
-		plat = dev_get_parent_platdata(dev);
+		plat = dev_get_parent_plat(dev);
 		if (plat->port == port) {
 			gen_desc = plat->plat.desc_list;
 			gen_desc = usb_emul_find_descriptor(gen_desc,
@@ -222,13 +219,9 @@ static int sandbox_hub_submit_control_msg(struct udevice *bus,
 				udev->status = 0;
 				udev->act_len = sizeof(*hubsts);
 				return 0;
+			    }
 			}
-			default:
-				debug("%s: rx ctl requesttype=%x, request=%x\n",
-				      __func__, setup->requesttype,
-				      setup->request);
-				break;
-			}
+			break;
 		case USB_RT_PORT | USB_DIR_IN:
 			switch (setup->request) {
 			case USB_REQ_GET_STATUS: {
@@ -241,13 +234,12 @@ static int sandbox_hub_submit_control_msg(struct udevice *bus,
 				udev->status = 0;
 				udev->act_len = sizeof(*portsts);
 				return 0;
+			    }
 			}
-			}
-		default:
-			debug("%s: rx ctl requesttype=%x, request=%x\n",
-			      __func__, setup->requesttype, setup->request);
 			break;
 		}
+		debug("%s: rx ctl requesttype=%x, request=%x\n",
+		      __func__, setup->requesttype, setup->request);
 	} else if (pipe == usb_sndctrlpipe(udev, 0)) {
 		switch (setup->requesttype) {
 		case USB_RT_PORT:
@@ -265,7 +257,7 @@ static int sandbox_hub_submit_control_msg(struct udevice *bus,
 					debug("  ** Invalid feature\n");
 				}
 				return ret;
-			}
+			    }
 			case USB_REQ_CLEAR_FEATURE: {
 				int port;
 
@@ -281,18 +273,11 @@ static int sandbox_hub_submit_control_msg(struct udevice *bus,
 				}
 				udev->status = 0;
 				return 0;
+			    }
 			}
-			default:
-				debug("%s: tx ctl requesttype=%x, request=%x\n",
-				      __func__, setup->requesttype,
-				      setup->request);
-				break;
-			}
-		default:
-			debug("%s: tx ctl requesttype=%x, request=%x\n",
-			      __func__, setup->requesttype, setup->request);
-			break;
 		}
+		debug("%s: tx ctl requesttype=%x, request=%x\n",
+		      __func__, setup->requesttype, setup->request);
 	}
 	debug("pipe=%lx\n", pipe);
 
@@ -306,8 +291,8 @@ static int sandbox_hub_bind(struct udevice *dev)
 
 static int sandbox_child_post_bind(struct udevice *dev)
 {
-	struct sandbox_hub_platdata *plat = dev_get_parent_platdata(dev);
-	struct usb_emul_platdata *emul = dev_get_uclass_platdata(dev);
+	struct sandbox_hub_plat *plat = dev_get_parent_plat(dev);
+	struct usb_emul_plat *emul = dev_get_uclass_plat(dev);
 
 	plat->port = dev_read_u32_default(dev, "reg", -1);
 	emul->port1 = plat->port + 1;
@@ -330,8 +315,7 @@ U_BOOT_DRIVER(usb_sandbox_hub) = {
 	.of_match = sandbox_usb_hub_ids,
 	.bind	= sandbox_hub_bind,
 	.ops	= &sandbox_usb_hub_ops,
-	.priv_auto_alloc_size = sizeof(struct sandbox_hub_priv),
-	.per_child_platdata_auto_alloc_size =
-			sizeof(struct sandbox_hub_platdata),
+	.priv_auto	= sizeof(struct sandbox_hub_priv),
+	.per_child_plat_auto	= sizeof(struct sandbox_hub_plat),
 	.child_post_bind = sandbox_child_post_bind,
 };

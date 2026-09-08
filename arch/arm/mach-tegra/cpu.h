@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2010-2015
  * NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <asm/types.h>
 
@@ -72,7 +71,7 @@ void powerup_cpu(void);
 void reset_A9_cpu(int reset);
 void start_cpu(u32 reset_vector);
 int tegra_get_chip(void);
+u32 tegra_get_major_version(void);
 int tegra_get_sku_info(void);
 int tegra_get_chip_sku(void);
 void adjust_pllp_out_freqs(void);
-void pmic_enable_cpu_vdd(void);

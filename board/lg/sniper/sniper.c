@@ -1,22 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * LG Optimus Black codename sniper board
  *
  * Copyright (C) 2015 Paul Kocialkowski <contact@paulk.fr>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
-#include <common.h>
 #include <dm.h>
+#include <env.h>
+#include <fastboot.h>
+#include <init.h>
+#include <asm/global_data.h>
 #include <linux/ctype.h>
 #include <linux/usb/musb.h>
 #include <asm/omap_musb.h>
-#include <asm/arch/mmc_host_def.h>
 #include <asm/arch/sys_proto.h>
 #include <asm/arch/mem.h>
 #include <asm/io.h>
-#include <ns16550.h>
 #include <twl4030.h>
 #include "sniper.h"
 
@@ -28,18 +28,7 @@ const omap3_sysinfo sysinfo = {
 	.nand_string = "MMC"
 };
 
-static const struct ns16550_platdata serial_omap_platdata = {
-	.base = OMAP34XX_UART3,
-	.reg_shift = 2,
-	.clock = V_NS16550_CLK,
-	.fcr = UART_FCR_DEFVAL,
-};
-
-U_BOOT_DEVICE(sniper_serial) = {
-	.name = "ns16550_serial",
-	.platdata = &serial_omap_platdata
-};
-
+#if defined(CONFIG_USB_MUSB_HOST) || defined(CONFIG_USB_MUSB_GADGET)
 static struct musb_hdrc_config musb_config = {
 	.multipoint = 1,
 	.dyn_fifo = 1,
@@ -58,13 +47,14 @@ static struct musb_hdrc_platform_data musb_platform_data = {
 	.platform_ops = &omap2430_ops,
 	.board_data = &musb_board_data,
 };
+#endif
 
 void set_muxconf_regs(void)
 {
 	MUX_SNIPER();
 }
 
-#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_XPL_BUILD
 void get_board_mem_timings(struct board_sdrc_timings *timings)
 {
 	timings->mcfg = HYNIX_V_MCFG_200(256 << 20);
@@ -72,6 +62,11 @@ void get_board_mem_timings(struct board_sdrc_timings *timings)
 	timings->ctrlb = HYNIX_V_ACTIMB_200;
 	timings->rfr_ctrl = SDP_3430_SDRC_RFR_CTRL_200MHz;
 	timings->mr = MICRON_V_MR_165;
+}
+
+void spl_board_init(void)
+{
+	twl4030_power_mmc_init(1);
 }
 #endif
 
@@ -144,17 +139,20 @@ int misc_init_r(void)
 	omap_die_id_serial();
 
 	/* MUSB */
-
+#if defined(CONFIG_USB_MUSB_HOST) || defined(CONFIG_USB_MUSB_GADGET)
 	musb_register(&musb_platform_data, &musb_board_data, (void *)MUSB_BASE);
+#endif
 
 	return 0;
 }
 
+#ifdef CONFIG_REVISION_TAG
 u32 get_board_rev(void)
 {
 	/* Sold devices are expected to be at least revision F. */
 	return 6;
 }
+#endif
 
 void get_board_serial(struct tag_serialnr *serialnr)
 {
@@ -174,17 +172,10 @@ void reset_misc(void)
 	omap_reboot_mode_store(reboot_mode);
 }
 
-int fb_set_reboot_flag(void)
+int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
 {
+	if (reason != FASTBOOT_REBOOT_REASON_BOOTLOADER)
+		return -ENOTSUPP;
+
 	return omap_reboot_mode_store("b");
-}
-
-int board_mmc_init(bd_t *bis)
-{
-	return omap_mmc_init(1, 0, 0, -1, -1);
-}
-
-void board_mmc_power_init(void)
-{
-	twl4030_power_mmc_init(1);
 }

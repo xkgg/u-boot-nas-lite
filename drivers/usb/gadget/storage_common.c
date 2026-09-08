@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * storage_common.c -- Common definitions for mass storage functionality
  *
@@ -10,10 +11,7 @@
  *
  * Code refactoring & cleanup:
  * Łukasz Majewski <l.majewski@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-
 
 /*
  * This file requires the following identifiers used in USB strings to
@@ -47,9 +45,7 @@
  * characters rather then a pointer to void.
  */
 
-
 /* #include <asm/unaligned.h> */
-
 
 /*
  * Thanks to NetChip Technologies for donating this product ID.
@@ -269,7 +265,10 @@ struct interrupt_data {
 struct device_attribute { int i; };
 #define ETOOSMALL	525
 
+#include <log.h>
+#include <linux/log2.h>
 #include <usb_mass_storage.h>
+#include <dm/device_compat.h>
 
 /*-------------------------------------------------------------------------*/
 
@@ -289,6 +288,8 @@ struct fsg_lun {
 	u32		sense_data;
 	u32		sense_data_info;
 	u32		unit_attention_data;
+	unsigned int	blkbits;
+	unsigned int	blksize; /* logical block size of bound block device */
 
 	struct device	dev;
 };
@@ -309,7 +310,7 @@ static struct fsg_lun *fsg_lun_from_dev(struct device *dev)
 #define FSG_NUM_BUFFERS	2
 
 /* Default size of buffer length. */
-#define FSG_BUFLEN	((u32)262144)
+#define FSG_BUFLEN	((u32)131072)
 
 /* Maximal number of LUNs supported in mass storage function */
 #define FSG_MAX_LUNS	8
@@ -530,76 +531,14 @@ static struct usb_descriptor_header *fsg_hs_function[] = {
 	NULL,
 };
 
-static struct usb_endpoint_descriptor
-fsg_ss_bulk_in_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-
-	/* bEndpointAddress copied from fs_bulk_in_desc during fsg_bind() */
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(1024),
-};
-
-static struct usb_ss_ep_comp_descriptor
-fsg_ss_bulk_in_comp_desc = {
-	.bLength		= sizeof(fsg_ss_bulk_in_comp_desc),
-	.bDescriptorType	= USB_DT_SS_ENDPOINT_COMP,
-	/* .bMaxBurst		= DYNAMIC, */
-};
-
-static struct usb_endpoint_descriptor
-fsg_ss_bulk_out_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-
-	/* bEndpointAddress copied from fs_bulk_out_desc during fsg_bind() */
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(1024),
-};
-
-static struct usb_ss_ep_comp_descriptor
-fsg_ss_bulk_out_comp_desc = {
-	.bLength		= sizeof(fsg_ss_bulk_out_comp_desc),
-	.bDescriptorType	= USB_DT_SS_ENDPOINT_COMP,
-	/* .bMaxBurst		= DYNAMIC, */
-};
-
 /* Maxpacket and other transfer characteristics vary by speed. */
 static struct usb_endpoint_descriptor *
 fsg_ep_desc(struct usb_gadget *g, struct usb_endpoint_descriptor *fs,
-	    struct usb_endpoint_descriptor *hs,
-	    struct usb_endpoint_descriptor *ss,
-	    struct usb_ss_ep_comp_descriptor *comp_desc,
-	    struct usb_ep *ep)
+		struct usb_endpoint_descriptor *hs)
 {
-	struct usb_endpoint_descriptor *speed_desc = NULL;
-
-	/* select desired speed */
-	switch (g->speed) {
-	case USB_SPEED_SUPER:
-		if (gadget_is_superspeed(g)) {
-			speed_desc = ss;
-			ep->comp_desc = comp_desc;
-			break;
-		}
-		/* else: Fall trough */
-	case USB_SPEED_HIGH:
-		if (gadget_is_dualspeed(g)) {
-			speed_desc = hs;
-			break;
-		}
-		/* else: fall through */
-	default:
-		speed_desc = fs;
-	}
-
-	/*
-	 * Config the ep maxpacket according to the right descriptors
-	 * for a given endpoint.
-	 */
-	ep->maxpacket = usb_endpoint_maxp(speed_desc) & USB_ENDPOINT_MAXP_MASK;
-
-	return speed_desc;
+	if (gadget_is_dualspeed(g) && g->speed == USB_SPEED_HIGH)
+		return hs;
+	return fs;
 }
 
 /* Static strings, in UTF-8 (for simplicity we use only ASCII characters) */
@@ -627,7 +566,7 @@ static struct usb_gadget_strings	fsg_stringtab = {
  */
 
 static int fsg_lun_open(struct fsg_lun *curlun, unsigned int num_sectors,
-			const char *filename)
+			unsigned int sector_size, const char *filename)
 {
 	int				ro;
 
@@ -635,9 +574,12 @@ static int fsg_lun_open(struct fsg_lun *curlun, unsigned int num_sectors,
 	ro = curlun->initially_ro;
 
 	curlun->ro = ro;
-	curlun->file_length = num_sectors << 9;
+	curlun->file_length = num_sectors * sector_size;
 	curlun->num_sectors = num_sectors;
-	debug("open backing file: %s\n", filename);
+	curlun->blksize = sector_size;
+	curlun->blkbits = order_base_2(sector_size >> 9) + 9;
+	debug("blksize: %u\n", sector_size);
+	debug("open backing file: '%s'\n", filename);
 
 	return 0;
 }

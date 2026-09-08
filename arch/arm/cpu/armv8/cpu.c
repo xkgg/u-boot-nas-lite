@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2008 Texas Insturments
  *
@@ -7,12 +8,12 @@
  *
  * (C) Copyright 2002
  * Gary Jennejohn, DENX Software Engineering, <garyj@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <command.h>
+#include <cpu_func.h>
+#include <irq_func.h>
+#include <asm/cache.h>
 #include <asm/system.h>
 #include <asm/secure.h>
 #include <linux/compiler.h>
@@ -31,6 +32,8 @@ void sdelay(unsigned long loops)
 			  "b.ne 1b" : "=r" (loops) : "0"(loops) : "cc");
 }
 
+void __weak board_cleanup_before_linux(void){}
+
 int cleanup_before_linux(void)
 {
 	/*
@@ -39,22 +42,31 @@ int cleanup_before_linux(void)
 	 *
 	 * disable interrupt and turn off caches etc ...
 	 */
+
+	board_cleanup_before_linux();
+
 	disable_interrupts();
 
-	disable_serror();
+	if (IS_ENABLED(CONFIG_CMO_BY_VA_ONLY)) {
+		/*
+		 * Disable D-cache.
+		 */
+		dcache_disable();
+	} else {
+		/*
+		 * Turn off I-cache and invalidate it
+		 */
+		icache_disable();
+		invalidate_icache_all();
 
-	/*
-	 * Turn off I-cache and invalidate it
-	 */
-	icache_disable();
-	invalidate_icache_all();
-
-	/*
-	 * turn off D-cache
-	 * dcache_disable() in turn flushes the d-cache and disables MMU
-	 */
-	dcache_disable();
-	invalidate_dcache_all();
+		/*
+		 * turn off D-cache
+		 * dcache_disable() in turn flushes the d-cache and disables
+		 * MMU
+		 */
+		dcache_disable();
+		invalidate_dcache_all();
+	}
 
 	return 0;
 }
@@ -74,8 +86,16 @@ static void relocate_secure_section(void)
 
 void armv8_setup_psci(void)
 {
+	if (current_el() != 3)
+		return;
+
 	relocate_secure_section();
 	secure_ram_addr(psci_setup_vectors)();
 	secure_ram_addr(psci_arch_init)();
 }
 #endif
+
+void allow_unaligned(void)
+{
+	set_sctlr(get_sctlr() & ~CR_A);
+}

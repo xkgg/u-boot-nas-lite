@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Based on Linux i.MX iomux-v3.h file:
  * Copyright (C) 2009 by Jan Weitzel Phytec Messtechnik GmbH,
  *			<armlinux@phytec.de>
  *
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __MACH_IOMUX_H__
@@ -70,7 +69,6 @@ typedef u64 iomux_cfg_t;
 #define NEW_PAD_CTRL(cfg, pad)	(((cfg) & ~MUX_PAD_CTRL_MASK) | \
 					MUX_PAD_CTRL(pad))
 
-
 #define IOMUX_CONFIG_MPORTS       0x20
 #define MUX_MODE_MPORTS           ((iomux_v3_cfg_t)IOMUX_CONFIG_MPORTS << \
 				MUX_MODE_SHIFT)
@@ -87,7 +85,6 @@ typedef u64 iomux_cfg_t;
 #define PAD_CTL_PUE          (1 << 1)
 #define PAD_CTL_PUS_UP       ((1 << 0) | PAD_CTL_PUE)
 #define PAD_CTL_PUS_DOWN     ((0 << 0) | PAD_CTL_PUE)
-
 
 void mx7ulp_iomux_setup_pad(iomux_cfg_t pad);
 void mx7ulp_iomux_setup_multiple_pads(iomux_cfg_t const *pad_list,

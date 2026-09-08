@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2012 Samsung Electronics
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _S3C24X0_I2C_H
@@ -47,6 +46,12 @@ struct exynos5_hsi2c {
 	u32	i2c_addr;
 };
 
+enum s3c24x0_i2c_variant {
+	VARIANT_NONE,
+	VARIANT_HSI2C_EXYNOS5,
+	VARIANT_HSI2C_EXYNOS7,
+};
+
 struct s3c24x0_i2c_bus {
 	bool active;	/* port is active and available */
 	int node;	/* device tree node */
@@ -55,9 +60,12 @@ struct s3c24x0_i2c_bus {
 	struct exynos5_hsi2c *hsregs;
 	int is_highspeed;	/* High speed type, rather than I2C */
 	unsigned clock_frequency;
+#if IS_ENABLED(CONFIG_ARCH_EXYNOS4) || IS_ENABLED(CONFIG_ARCH_EXYNOS5)
 	int id;
+#endif
 	unsigned clk_cycle;
 	unsigned clk_div;
+	enum s3c24x0_i2c_variant variant;
 };
 
 #define	I2C_WRITE	0

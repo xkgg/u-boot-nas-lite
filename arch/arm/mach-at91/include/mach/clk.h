@@ -1,10 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2007
  * Stelian Pop <stelian@popies.net>
  * Lead Tech Design <www.leadtechdesign.com>
  * Copyright (C) 2009 Jean-Christophe PLAGNIOL-VILLARD <plagnioj@jcrosoft.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef __ASM_ARM_ARCH_CLK_H__
 #define __ASM_ARM_ARCH_CLK_H__
@@ -12,6 +11,7 @@
 #include <asm/arch/hardware.h>
 #include <asm/arch/at91_pmc.h>
 #include <asm/global_data.h>
+#include <asm/io.h>
 
 #define GCK_CSS_SLOW_CLK	0
 #define GCK_CSS_MAIN_CLK	1

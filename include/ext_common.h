@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2011 - 2012 Samsung Electronics
  * EXT4 filesystem implementation in Uboot by
@@ -14,14 +15,18 @@
  * based on code from grub2 fs/ext2.c and fs/fshelp.c by
  * GRUB  --  GRand Unified Bootloader
  * Copyright (C) 2003, 2004  Free Software Foundation, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __EXT_COMMON__
 #define __EXT_COMMON__
-#include <command.h>
+
+#include <blk.h>
+#include <compiler.h>
+
+struct cmd_tbl;
+
 #define SECTOR_SIZE		0x200
+#define LOG2_SECTOR_SIZE	9
 
 /* Magic value used to identify an ext2 filesystem.  */
 #define	EXT2_MAGIC			0xEF53
@@ -31,6 +36,16 @@
 #define EXT2_PATH_MAX				4096
 /* Maximum nesting of symlinks, used to prevent a loop.  */
 #define	EXT2_MAX_SYMLINKCNT		8
+/* Maximum file name length */
+#define EXT2_NAME_LEN 255
+
+/*
+ * Revision levels
+ */
+#define EXT2_GOOD_OLD_REV	0	/* The good old (original) format */
+#define EXT2_DYNAMIC_REV	1	/* V2 format w/ dynamic inode sizes */
+
+#define EXT2_GOOD_OLD_INODE_SIZE 128
 
 /* Filetype used in directory entry.  */
 #define	FILETYPE_UNKNOWN		0
@@ -44,6 +59,10 @@
 #define FILETYPE_INO_DIRECTORY		0040000
 #define FILETYPE_INO_SYMLINK		0120000
 #define EXT2_ROOT_INO			2 /* Root inode */
+#define EXT2_BOOT_LOADER_INO		5 /* Boot loader inode */
+
+/* First non-reserved inode for old ext2 filesystems */
+#define EXT2_GOOD_OLD_FIRST_INO	11
 
 /* The size of an ext2 block in bytes.  */
 #define EXT2_BLOCK_SIZE(data)	   (1 << LOG2_BLOCK_SIZE(data))
@@ -155,20 +174,38 @@ struct ext2_block_group {
 	__le32 bg_reserved;
 };
 
-/* The ext2 inode. */
+/**
+ * struct ext2_inode - ext2 inode
+ *
+ * For details see Linux file
+ * Documentation/filesystems/ext4/inodes.rst.
+ */
 struct ext2_inode {
+	/** @mode: file mode */
 	__le16 mode;
+	/** @uid: lower 16 bits of owner UID */
 	__le16 uid;
+	/** @size: lower 32 bits of file size */
 	__le32 size;
+	/** @atime: last access time */
 	__le32 atime;
+	/** @ctime: last change time */
 	__le32 ctime;
+	/** @mtime: last modification time */
 	__le32 mtime;
+	/** @dtime: deletion time */
 	__le32 dtime;
+	/** @gid: lower 16 bits of group ID */
 	__le16 gid;
+	/** @nlinks: number of hard links */
 	__le16 nlinks;
-	__le32 blockcnt;	/* Blocks of either 512 or block_size bytes */
+	/** @blockcnt: lower 32 bit of block count */
+	__le32 blockcnt;
+	/** @flags: inode flags */
 	__le32 flags;
+	/** @osd1: operating system specific data */
 	__le32 osd1;
+	/** @b: block map or extent tree */
 	union {
 		struct datablocks {
 			__le32 dir_blocks[INDIRECT_BLOCKS];
@@ -179,10 +216,19 @@ struct ext2_inode {
 		char symlink[60];
 		char inline_data[60];
 	} b;
+	/** @version: file version (for NFS) */
 	__le32 version;
+	/** @acl: lower 32 bit of extended attribute block */
 	__le32 acl;
-	__le32 size_high;	/* previously dir_acl, but never used */
+	/** @size_high - dir_acl on ext2/3, upper 32 size bits on ext4
+	 *
+	 * In ext2/3 this field was named i_dir_acl, though it was usually set
+	 * to zero and never used.
+	 */
+	__le32 size_high;
+	/** @fragment_addr - (obsolete) fragment address */
 	__le32 fragment_addr;
+	/** @osd2: operating system specific data */
 	__le32 osd2[3];
 };
 
@@ -210,11 +256,11 @@ struct ext2_data {
 
 extern lbaint_t part_offset;
 
-int do_ext2ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[]);
-int do_ext2load(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[]);
-int do_ext4_load(cmd_tbl_t *cmdtp, int flag, int argc,
-					char *const argv[]);
-int do_ext4_ls(cmd_tbl_t *cmdtp, int flag, int argc, char *const argv[]);
-int do_ext4_write(cmd_tbl_t *cmdtp, int flag, int argc,
-				char *const argv[]);
+int do_ext2ls(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[]);
+int do_ext2load(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[]);
+int do_ext4_load(struct cmd_tbl *cmdtp, int flag, int argc,
+		 char *const argv[]);
+int do_ext4_ls(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[]);
+int do_ext4_write(struct cmd_tbl *cmdtp, int flag, int argc,
+		  char *const argv[]);
 #endif

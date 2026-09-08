@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2015 Google, Inc
- *
- * SPDX-License-Identifier:     GPL-2.0+
  *
  * Dhrystone is widely available in the public domain. A GPL license is
  * chosen for U-Boot.
@@ -366,7 +365,6 @@
  ***************************************************************************
  */
 
-
 /* Compiler and system dependent definitions: */
 
 #ifndef TIME
@@ -432,7 +430,6 @@ typedef struct record
                   } var_3;
           } variant;
       } Rec_Type, *Rec_Pointer;
-
 
 /*
  * dhry() - run dhrystone for a given number of iterations

@@ -1,11 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2017 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _WDT_H_
 #define _WDT_H_
+
+struct udevice;
 
 /*
  * Implement a simple watchdog uclass. Watchdog is basically a timer that
@@ -16,6 +17,15 @@
  * The timeout signal is used to initiate corrective action or actions,
  * which typically include placing the system in a safe, known state.
  */
+
+/*
+ * Force watchdog start during init. Called by driver's probe when the watchdog
+ * is detected as already started.
+ *
+ * @dev: WDT Device
+ * @return: 0 if OK, -ve on error
+ */
+int wdt_set_force_autostart(struct udevice *dev);
 
 /*
  * Start the timer
@@ -37,6 +47,14 @@ int wdt_start(struct udevice *dev, u64 timeout_ms, ulong flags);
 int wdt_stop(struct udevice *dev);
 
 /*
+ * Stop all registered watchdog devices.
+ *
+ * @return: 0 if ok, first error encountered otherwise (but wdt_stop()
+ * is still called on following devices)
+ */
+int wdt_stop_all(void);
+
+/*
  * Reset the timer, typically restoring the counter to
  * the value configured by start()
  *
@@ -51,7 +69,7 @@ int wdt_reset(struct udevice *dev);
  *
  * @dev: WDT Device
  * @flags: Driver specific flags
- * @return 0 if OK -ve on error. If wdt action is system reset,
+ * Return: 0 if OK -ve on error. If wdt action is system reset,
  * this function may never return.
  */
 int wdt_expire_now(struct udevice *dev, ulong flags);
@@ -103,5 +121,7 @@ struct wdt_ops {
 	 */
 	int (*expire_now)(struct udevice *dev, ulong flags);
 };
+
+int initr_watchdog(void);
 
 #endif  /* _WDT_H_ */

@@ -1,12 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2012 Samsung Electronics.
  * Abhilash Kesavan <a.kesavan@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <fdtdec.h>
+#include <log.h>
 #include <asm/gpio.h>
 #include <asm/arch/pinmux.h>
 #include <asm/arch/sromc.h>
@@ -33,7 +32,7 @@ static void exynos5_uart_config(int peripheral)
 		count = 2;
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return;
 	}
 	for (i = start; i < start + count; i++) {
@@ -64,7 +63,7 @@ static void exynos5420_uart_config(int peripheral)
 		count = 2;
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return;
 	}
 
@@ -98,12 +97,12 @@ static int exynos5_mmc_config(int peripheral, int flags)
 		start_ext = 0;
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 	if ((flags & PINMUX_FLAG_8BIT_MODE) && !start_ext) {
-		debug("SDMMC device %d does not support 8bit mode",
-				peripheral);
+		debug("SDMMC device %d does not support 8bit mode\n",
+		      peripheral);
 		return -1;
 	}
 	if (flags & PINMUX_FLAG_8BIT_MODE) {
@@ -146,12 +145,12 @@ static int exynos5420_mmc_config(int peripheral, int flags)
 		break;
 	default:
 		start = 0;
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 
 	if ((flags & PINMUX_FLAG_8BIT_MODE) && !start_ext) {
-		debug("SDMMC device %d does not support 8bit mode",
+		debug("SDMMC device %d does not support 8bit mode\n",
 		      peripheral);
 		return -1;
 	}
@@ -172,7 +171,7 @@ static int exynos5420_mmc_config(int peripheral, int flags)
 		 * this same assumption.
 		 */
 		if ((peripheral == PERIPH_ID_SDMMC0) && (i == (start + 2))) {
-#ifndef CONFIG_SPL_BUILD
+#ifndef CONFIG_XPL_BUILD
 			gpio_request(i, "sdmmc0_vdden");
 #endif
 			gpio_set_value(i, 1);
@@ -379,6 +378,19 @@ static void exynos5_i2s_config(int peripheral)
 	}
 }
 
+static void exynos5420_i2s_config(int peripheral)
+{
+	int i;
+
+	switch (peripheral) {
+	case PERIPH_ID_I2S0:
+		for (i = 0; i < 5; i++)
+			gpio_cfg_pin(EXYNOS5420_GPIO_Z0 + i,
+				     S5P_GPIO_FUNC(0x02));
+		break;
+	}
+}
+
 void exynos5_spi_config(int peripheral)
 {
 	int cfg = 0, pin = 0, i;
@@ -441,7 +453,7 @@ void exynos5420_spi_config(int peripheral)
 	default:
 		cfg = 0;
 		pin = 0;
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return;
 	}
 
@@ -510,7 +522,7 @@ static int exynos5_pinmux_config(int peripheral, int flags)
 		gpio_cfg_pin(EXYNOS5_GPIO_B20, S5P_GPIO_FUNC(2));
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 
@@ -551,11 +563,14 @@ static int exynos5420_pinmux_config(int peripheral, int flags)
 	case PERIPH_ID_I2C10:
 		exynos5420_i2c_config(peripheral);
 		break;
+	case PERIPH_ID_I2S0:
+		exynos5420_i2s_config(peripheral);
+		break;
 	case PERIPH_ID_PWM0:
 		gpio_cfg_pin(EXYNOS5420_GPIO_B20, S5P_GPIO_FUNC(2));
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 
@@ -668,7 +683,7 @@ static void exynos4_uart_config(int peripheral)
 		count = 2;
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return;
 	}
 	for (i = start; i < (start + count); i++) {
@@ -782,7 +797,7 @@ static void exynos4x12_uart_config(int peripheral)
 		count = 2;
 		break;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return;
 	}
 	for (i = start; i < (start + count); i++) {
@@ -819,7 +834,7 @@ static int exynos4_pinmux_config(int peripheral, int flags)
 		debug("SDMMC device %d not implemented\n", peripheral);
 		return -1;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 
@@ -854,7 +869,7 @@ static int exynos4x12_pinmux_config(int peripheral, int flags)
 		debug("SDMMC device %d not implemented\n", peripheral);
 		return -1;
 	default:
-		debug("%s: invalid peripheral %d", __func__, peripheral);
+		debug("%s: invalid peripheral %d\n", __func__, peripheral);
 		return -1;
 	}
 
@@ -864,7 +879,7 @@ static int exynos4x12_pinmux_config(int peripheral, int flags)
 int exynos_pinmux_config(int peripheral, int flags)
 {
 	if (cpu_is_exynos5()) {
-		if (proid_is_exynos5420() || proid_is_exynos5422())
+		if (proid_is_exynos542x())
 			return exynos5420_pinmux_config(peripheral, flags);
 		else if (proid_is_exynos5250())
 			return exynos5_pinmux_config(peripheral, flags);
@@ -887,7 +902,7 @@ static int exynos4_pinmux_decode_periph_id(const void *blob, int node)
 	u32 cell[3];
 
 	err = fdtdec_get_int_array(blob, node, "interrupts", cell,
-					ARRAY_SIZE(cell));
+				   ARRAY_SIZE(cell));
 	if (err) {
 		debug(" invalid peripheral id\n");
 		return PERIPH_ID_NONE;
@@ -902,7 +917,7 @@ static int exynos5_pinmux_decode_periph_id(const void *blob, int node)
 	u32 cell[3];
 
 	err = fdtdec_get_int_array(blob, node, "interrupts", cell,
-					ARRAY_SIZE(cell));
+				   ARRAY_SIZE(cell));
 	if (err)
 		return PERIPH_ID_NONE;
 

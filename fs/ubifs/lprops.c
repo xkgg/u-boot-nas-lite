@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This file is part of UBIFS.
  *
  * Copyright (C) 2006-2008 Nokia Corporation.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Authors: Adrian Hunter
  *          Artem Bityutskiy (Битюцкий Артём)
@@ -18,6 +17,8 @@
  */
 
 #ifdef __UBOOT__
+#include <log.h>
+#include <malloc.h>
 #include <linux/err.h>
 #endif
 #include "ubifs.h"
@@ -1095,14 +1096,16 @@ static int scan_check_cb(struct ubifs_info *c,
 		lst->empty_lebs += 1;
 		lst->total_free += c->leb_size;
 		lst->total_dark += ubifs_calc_dark(c, c->leb_size);
-		return LPT_SCAN_CONTINUE;
+		ret = LPT_SCAN_CONTINUE;
+		goto out;
 	}
 	if (lp->free + lp->dirty == c->leb_size &&
 	    !(lp->flags & LPROPS_INDEX)) {
 		lst->total_free  += lp->free;
 		lst->total_dirty += lp->dirty;
 		lst->total_dark  +=  ubifs_calc_dark(c, c->leb_size);
-		return LPT_SCAN_CONTINUE;
+		ret = LPT_SCAN_CONTINUE;
+		goto out;
 	}
 
 	sleb = ubifs_scan(c, lnum, 0, buf, 0);

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2000-2004
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -13,7 +12,6 @@
 
 #ifndef __MPCXX_H__
 #define __MPCXX_H__
-
 
 /*-----------------------------------------------------------------------
  * Exception offsets (PowerPC standard)
@@ -201,7 +199,6 @@
 #define SCCR_DFALCD10	0x00000002	/* Division by 5			*/
 #define SCCR_DFALCD11	0x00000003	/* Division by 7 (maximum)		*/
 
-
 /*-----------------------------------------------------------------------
  * BR - Memory Controler: Base Register					16-9
  */
@@ -253,7 +250,6 @@
 #define OR_SETA		0x00000008	/* External Transfer Acknowledge	*/
 #define OR_TRLX		0x00000004	/* Timing Relaxed			*/
 #define OR_EHTR		0x00000002	/* Extended Hold Time on Read		*/
-
 
 /*-----------------------------------------------------------------------
  * MPTPR - Memory Periodic Timer Prescaler Register			16-17
@@ -465,7 +461,6 @@
 #define TGCR_STP1	0x0002		/* Stop timer	1		*/
 #define TGCR_RST1	0x0001		/* Reset timer	1		*/
 
-
 /*-----------------------------------------------------------------------
  * Timer Mode Register							18-9
  */
@@ -485,7 +480,6 @@
 #define TMR_ICLK_IN_GEN_DIV16	0x0004	/* Internal General system clk div 16	*/
 #define TMR_ICLK_TIN_PIN	0x0006	/* TINx pin				*/
 #define TMR_GE			0x0001	/* Gate Enable				*/
-
 
 /*-----------------------------------------------------------------------
  * I2C Controller Registers

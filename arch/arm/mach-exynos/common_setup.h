@@ -23,6 +23,8 @@
  * MA 02111-1307 USA
  */
 
+#include <linux/types.h>
+#include <mach/cpu.h>
 #include <asm/arch/system.h>
 
 #define DMC_OFFSET	0x10000
@@ -40,7 +42,7 @@ void system_clock_init(void);
 /*
  * Init subsystems according to the reset status
  *
- * @return 0 for a normal boot, non-zero for a resume
+ * Return: 0 for a normal boot, non-zero for a resume
  */
 int do_lowlevel_init(void);
 
@@ -58,7 +60,6 @@ enum l2_cache_params {
 	CACHE_ECC_AND_PARITY = (1 << 21),
 	CACHE_ENABLE_FORCE_L2_LOGIC = (1 << 27)
 };
-
 
 #if !defined(CONFIG_SYS_L2CACHE_OFF) && defined(CONFIG_EXYNOS5420)
 /*
@@ -78,7 +79,7 @@ static inline void configure_l2_ctlr(void)
 		CACHE_TAG_RAM_LATENCY_2_CYCLES |
 		CACHE_DATA_RAM_LATENCY_2_CYCLES;
 
-	if (proid_is_exynos5420() || proid_is_exynos5422()) {
+	if (proid_is_exynos542x()) {
 		val |= CACHE_ECC_AND_PARITY |
 			CACHE_TAG_RAM_LATENCY_3_CYCLES |
 			CACHE_DATA_RAM_LATENCY_3_CYCLES;
@@ -97,7 +98,7 @@ static inline void configure_l2_actlr(void)
 {
 	uint32_t val;
 
-	if (proid_is_exynos5420() || proid_is_exynos5422()) {
+	if (proid_is_exynos542x()) {
 		mrc_l2_aux_ctlr(val);
 		val |= CACHE_ENABLE_FORCE_L2_LOGIC |
 			CACHE_DISABLE_CLEAN_EVICT;

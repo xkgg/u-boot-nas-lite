@@ -1,13 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * g_dnl.c -- USB Downloader Gadget
  *
  * Copyright (C) 2012 Samsung Electronics
  * Lukasz Majewski  <l.majewski@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <log.h>
 #include <malloc.h>
 
 #include <mmc.h>
@@ -18,10 +17,10 @@
 #include <usb_mass_storage.h>
 #include <dfu.h>
 #include <thor.h>
+#include <version.h>
 
 #include <env_callback.h>
 
-#include "gadget_chips.h"
 #include "composite.c"
 
 /*
@@ -51,8 +50,7 @@ static const char manufacturer[] = CONFIG_USB_GADGET_MANUFACTURER;
 void g_dnl_set_serialnumber(char *s)
 {
 	memset(g_dnl_serial, 0, MAX_STRING_SERIAL);
-	if (s)
-		strncpy(g_dnl_serial, s, MAX_STRING_SERIAL - 1);
+	strncpy(g_dnl_serial, s, MAX_STRING_SERIAL - 1);
 }
 
 static struct usb_device_descriptor device_desc = {
@@ -90,6 +88,14 @@ static struct usb_gadget_strings *g_dnl_composite_strings[] = {
 	&g_dnl_string_tab,
 	NULL,
 };
+
+void g_dnl_set_product(const char *s)
+{
+	if (s)
+		g_dnl_string_defs[1].s = s;
+	else
+		g_dnl_string_defs[1].s = product;
+}
 
 static int g_dnl_unbind(struct usb_composite_dev *cdev)
 {
@@ -193,18 +199,6 @@ void g_dnl_clear_detach(void)
 	g_dnl_detach_request = false;
 }
 
-static int g_dnl_get_bcd_device_number(struct usb_composite_dev *cdev)
-{
-	struct usb_gadget *gadget = cdev->gadget;
-	int gcnum;
-
-	gcnum = usb_gadget_controller_number(gadget);
-	if (gcnum > 0)
-		gcnum += 0x200;
-
-	return g_dnl_get_board_bcd_device_number(gcnum);
-}
-
 /**
  * Update internal serial number variable when the "serial#" env var changes.
  *
@@ -213,7 +207,8 @@ static int g_dnl_get_bcd_device_number(struct usb_composite_dev *cdev)
 static int on_serialno(const char *name, const char *value, enum env_op op,
 		int flags)
 {
-	g_dnl_set_serialnumber((char *)value);
+	if (value)
+		g_dnl_set_serialnumber((char *)value);
 	return 0;
 }
 U_BOOT_ENV_CALLBACK(serialno, on_serialno);
@@ -255,7 +250,8 @@ static int g_dnl_bind(struct usb_composite_dev *cdev)
 	if (ret)
 		goto error;
 
-	gcnum = g_dnl_get_bcd_device_number(cdev);
+	gcnum = g_dnl_get_board_bcd_device_number((U_BOOT_VERSION_NUM << 4) |
+						  U_BOOT_VERSION_NUM_PATCH);
 	if (gcnum >= 0)
 		device_desc.bcdDevice = cpu_to_le16(gcnum);
 	else {
@@ -279,6 +275,7 @@ static struct usb_composite_driver g_dnl_driver = {
 	.name = NULL,
 	.dev = &device_desc,
 	.strings = g_dnl_composite_strings,
+	.max_speed = USB_SPEED_SUPER,
 
 	.bind = g_dnl_bind,
 	.unbind = g_dnl_unbind,

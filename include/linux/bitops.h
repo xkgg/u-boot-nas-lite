@@ -1,6 +1,8 @@
 #ifndef _LINUX_BITOPS_H
 #define _LINUX_BITOPS_H
 
+#if !defined(USE_HOSTCC) && !defined(__ASSEMBLY__)
+
 #include <asm/types.h>
 #include <asm-generic/bitsperlong.h>
 #include <linux/compiler.h>
@@ -16,13 +18,21 @@
 #define BITS_TO_LONGS(nr)	DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
 #endif
 
+/* kernel.h includes log.h which include bitops.h */
+#include <linux/kernel.h>
+
 /*
  * Create a contiguous bitmask starting at bit position @l and ending at
  * position @h. For example
  * GENMASK_ULL(39, 21) gives us the 64bit vector 0x000000ffffe00000.
  */
+#ifdef CONFIG_SANDBOX
+#define GENMASK(h, l) \
+	(((~0UL) << (l)) & (~0UL >> (CONFIG_SANDBOX_BITS_PER_LONG - 1 - (h))))
+#else
 #define GENMASK(h, l) \
 	(((~0UL) << (l)) & (~0UL >> (BITS_PER_LONG - 1 - (h))))
+#endif
 
 #define GENMASK_ULL(h, l) \
 	(((~0ULL) << (l)) & (~0ULL >> (BITS_PER_LONG_LONG - 1 - (h))))
@@ -98,7 +108,6 @@ static inline int generic_fls(int x)
 	return r;
 }
 
-
 /*
  * hweightN: returns the hamming weight (i.e. the number
  * of bits set) of a N-bit word
@@ -126,6 +135,28 @@ static inline unsigned int generic_hweight8(unsigned int w)
 	unsigned int res = (w & 0x55) + ((w >> 1) & 0x55);
 	res = (res & 0x33) + ((res >> 2) & 0x33);
 	return (res & 0x0F) + ((res >> 4) & 0x0F);
+}
+
+static inline unsigned long generic_hweight64(__u64 w)
+{
+	return generic_hweight32((unsigned int)(w >> 32)) +
+	       generic_hweight32((unsigned int)w);
+}
+
+static inline unsigned long hweight_long(unsigned long w)
+{
+	return sizeof(w) == 4 ? generic_hweight32(w) : generic_hweight64(w);
+}
+
+/**
+ * rol32 - rotate a 32-bit value left
+ * @word: value to rotate
+ * @shift: bits to roll
+ */
+
+static inline __u32 rol32(__u32 word, unsigned int shift)
+{
+	return (word << (shift & 31)) | (word >> ((-shift) & 31));
 }
 
 #include <asm/bitops.h>
@@ -198,5 +229,7 @@ static inline void generic_clear_bit(int nr, volatile unsigned long *addr)
 
 	*p &= ~mask;
 }
+
+#endif /* !USE_HOSTCC && !__ASSEMBLY__ */
 
 #endif

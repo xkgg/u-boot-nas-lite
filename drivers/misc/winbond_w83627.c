@@ -1,12 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Stefan Roese <sr@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <pnp_def.h>
 #include <asm/io.h>
-#include <asm/pnp_def.h>
 
 #define WINBOND_ENTRY_KEY	0x87
 #define WINBOND_EXIT_KEY	0xaa

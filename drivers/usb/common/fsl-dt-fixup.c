@@ -1,24 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2009, 2011 Freescale Semiconductor, Inc.
  *
  * (C) Copyright 2008, Excito Elektronik i Sk=E5ne AB
  *
  * Author: Tor Krill tor@excito.com
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <log.h>
 #include <usb.h>
 #include <asm/io.h>
 #include <hwconfig.h>
 #include <fsl_errata.h>
 #include <fsl_usb.h>
 #include <fdt_support.h>
-
-#ifndef CONFIG_USB_MAX_CONTROLLER_COUNT
-#define CONFIG_USB_MAX_CONTROLLER_COUNT 1
-#endif
 
 /* USB Controllers */
 #define FSL_USB2_MPH	"fsl-usb2-mph"
@@ -104,7 +99,7 @@ static int fsl_fdt_fixup_usb_erratum(void *blob, const char *prop_erratum,
 	else
 		node_name = node_type;
 	if (strcmp(node_name, controller_type))
-		return err;
+		return -EINVAL;
 
 	err = fdt_setprop(blob, node_offset, prop_erratum, NULL, 0);
 	if (err < 0) {
@@ -132,7 +127,7 @@ static int fsl_fdt_fixup_erratum(int *usb_erratum_off, void *blob,
 	return 0;
 }
 
-void fsl_fdt_fixup_dr_usb(void *blob, bd_t *bd)
+void fsl_fdt_fixup_dr_usb(void *blob, struct bd_info *bd)
 {
 	static const char * const modes[] = { "host", "peripheral", "otg" };
 	static const char * const phys[] = { "ulpi", "utmi", "utmi_dual" };

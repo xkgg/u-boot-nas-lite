@@ -1,18 +1,18 @@
+// SPDX-License-Identifier: Intel
 /*
  * Copyright (C) 2013, Intel Corporation
  * Copyright (C) 2015, Bin Meng <bmeng.cn@gmail.com>
  *
  * Ported from Intel released Quark UEFI BIOS
  * QuarkSocPkg/QuarkNorthCluster/MemoryInit/Pei
- *
- * SPDX-License-Identifier:	Intel
  */
 
-#include <common.h>
+#include <hang.h>
 #include <asm/arch/device.h>
 #include <asm/arch/mrc.h>
 #include <asm/arch/msg_port.h>
 #include <asm/arch/quark.h>
+#include <asm/u-boot-x86.h>
 #include "mrc_util.h"
 #include "hte.h"
 #include "smc.h"

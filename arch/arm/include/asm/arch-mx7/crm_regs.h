@@ -1,10 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015 Freescale Semiconductor, Inc.
  *
  * Author:
  *	Peng Fan <Peng.Fan@freescale.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __ARCH_ARM_MACH_MX7_CCM_REGS_H__
@@ -58,7 +57,7 @@ struct mxc_ccm_reg {
 	uint32_t reserved_0[4092];
 	struct mxc_ccm_ccgr ccgr_array[191];	/* offset 0x4000 */
 	uint32_t reserved_1[3332];
-	struct mxc_ccm_root_slice root[121];	/* offset 0x8000 */
+	struct mxc_ccm_root_slice root[125];	/* offset 0x8000 */
 
 };
 
@@ -229,7 +228,6 @@ struct mxc_ccm_anatop_reg {
 #define ANADIG_PLL_DDR_PWDN_MASK			(0x01 << 20)
 #define ANADIG_PLL_ENET_PWDN_MASK			(0x01 << 5)
 #define ANADIG_PLL_VIDEO_PWDN_MASK			(0x01 << 12)
-
 
 #define ANATOP_PFD480B_PFD4_FRAC_MASK			0x0000003f
 #define ANATOP_PFD480B_PFD4_FRAC_320M_VAL		0x0000001B
@@ -1785,7 +1783,6 @@ struct mxc_ccm_anatop_reg {
 #define PMU_LOWPWR_CTRL_TOG_CONTROL1_SHIFT       24
 #define PMU_LOWPWR_CTRL_TOG_CONTROL1(x)          (((uint32_t)(((uint32_t)(x))<<PMU_LOWPWR_CTRL_TOG_CONTROL1_SHIFT))&PMU_LOWPWR_CTRL_TOG_CONTROL1_MASK)
 
-
 /* HW_ANADIG_TEMPSENSE0 Bit Fields */
 #define TEMPMON_HW_ANADIG_TEMPSENSE0_LOW_ALARM_VALUE_MASK 0x1FFu
 #define TEMPMON_HW_ANADIG_TEMPSENSE0_LOW_ALARM_VALUE_SHIFT 0
@@ -1999,30 +1996,29 @@ struct mxc_ccm_anatop_reg {
 #define TEMPMON_HW_ANADIG_TEMPSENSE_TRIM_TOG_T_MUX_ADDR_SHIFT 29
 #define TEMPMON_HW_ANADIG_TEMPSENSE_TRIM_TOG_T_MUX_ADDR(x) (((uint32_t)(((uint32_t)(x))<<TEMPMON_HW_ANADIG_TEMPSENSE_TRIM_TOG_T_MUX_ADDR_SHIFT))&TEMPMON_HW_ANADIG_TEMPSENSE_TRIM_TOG_T_MUX_ADDR_MASK)
 
+#define CCM_GPR(i)		(CCM_BASE_ADDR + CCM_GPR0_OFFSET + 0x10 * (i))
+#define CCM_OBSERVE(i)		(CCM_BASE_ADDR + CCM_OBSERVE0_OFFSET + 0x10 * (i))
+#define CCM_SCTRL(i)		(CCM_BASE_ADDR + CCM_SCTRL0_OFFSET + 0x10 * (i))
+#define CCM_CCGR(i)		(CCM_BASE_ADDR + CCM_CCGR0_OFFSET + 0x10 * (i))
+#define CCM_ROOT_TARGET(i)	(CCM_BASE_ADDR + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i))
 
-#define CCM_GPR(i)		(CCM_BASE_ADDRESS + CCM_GPR0_OFFSET + 0x10 * (i))
-#define CCM_OBSERVE(i)		(CCM_BASE_ADDRESS + CCM_OBSERVE0_OFFSET + 0x10 * (i))
-#define CCM_SCTRL(i)		(CCM_BASE_ADDRESS + CCM_SCTRL0_OFFSET + 0x10 * (i))
-#define CCM_CCGR(i)		(CCM_BASE_ADDRESS + CCM_CCGR0_OFFSET + 0x10 * (i))
-#define CCM_ROOT_TARGET(i)	(CCM_BASE_ADDRESS + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i))
+#define CCM_GPR_SET(i)		(CCM_BASE_ADDR + CCM_GPR0_OFFSET + 0x10 * (i) + 4)
+#define CCM_OBSERVE_SET(i)	(CCM_BASE_ADDR + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 4)
+#define CCM_SCTRL_SET(i)	(CCM_BASE_ADDR + CCM_SCTRL0_OFFSET + 0x10 * (i) + 4)
+#define CCM_CCGR_SET(i)		(CCM_BASE_ADDR + CCM_CCGR0_OFFSET + 0x10 * (i) + 4)
+#define CCM_ROOT_TARGET_SET(i)	(CCM_BASE_ADDR + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 4)
 
-#define CCM_GPR_SET(i)		(CCM_BASE_ADDRESS + CCM_GPR0_OFFSET + 0x10 * (i) + 4)
-#define CCM_OBSERVE_SET(i)	(CCM_BASE_ADDRESS + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 4)
-#define CCM_SCTRL_SET(i)	(CCM_BASE_ADDRESS + CCM_SCTRL0_OFFSET + 0x10 * (i) + 4)
-#define CCM_CCGR_SET(i)		(CCM_BASE_ADDRESS + CCM_CCGR0_OFFSET + 0x10 * (i) + 4)
-#define CCM_ROOT_TARGET_SET(i)	(CCM_BASE_ADDRESS + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 4)
+#define CCM_GPR_CLR(i)		(CCM_BASE_ADDR + CCM_GPR0_OFFSET + 0x10 * (i) + 8)
+#define CCM_OBSERVE_CLR(i)	(CCM_BASE_ADDR + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 8)
+#define CCM_SCTRL_CLR(i)	(CCM_BASE_ADDR + CCM_SCTRL0_OFFSET + 0x10 * (i) + 8)
+#define CCM_CCGR_CLR(i)		(CCM_BASE_ADDR + CCM_CCGR0_OFFSET + 0x10 * (i) + 8)
+#define CCM_ROOT_TARGET_CLR(i)	(CCM_BASE_ADDR + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 8)
 
-#define CCM_GPR_CLR(i)		(CCM_BASE_ADDRESS + CCM_GPR0_OFFSET + 0x10 * (i) + 8)
-#define CCM_OBSERVE_CLR(i)	(CCM_BASE_ADDRESS + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 8)
-#define CCM_SCTRL_CLR(i)	(CCM_BASE_ADDRESS + CCM_SCTRL0_OFFSET + 0x10 * (i) + 8)
-#define CCM_CCGR_CLR(i)		(CCM_BASE_ADDRESS + CCM_CCGR0_OFFSET + 0x10 * (i) + 8)
-#define CCM_ROOT_TARGET_CLR(i)	(CCM_BASE_ADDRESS + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 8)
-
-#define CCM_GPR_TOGGLE(i)	(CCM_BASE_ADDRESS + CCM_GPR0_OFFSET + 0x10 * (i) + 12)
-#define CCM_OBSERVE_TOGGLE(i)	(CCM_BASE_ADDRESS + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 12)
-#define CCM_SCTRL_TOGGLE(i)	(CCM_BASE_ADDRESS + CCM_SCTRL0_OFFSET + 0x10 * (i) + 12)
-#define CCM_CCGR_TOGGLE(i)	(CCM_BASE_ADDRESS + CCM_CCGR0_OFFSET + 0x10 * (i) + 12)
-#define CCM_ROOT_TARGET_TOGGLE(i)	(CCM_BASE_ADDRESS + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 12)
+#define CCM_GPR_TOGGLE(i)	(CCM_BASE_ADDR + CCM_GPR0_OFFSET + 0x10 * (i) + 12)
+#define CCM_OBSERVE_TOGGLE(i)	(CCM_BASE_ADDR + CCM_OBSERVE0_OFFSET + 0x10 * (i) + 12)
+#define CCM_SCTRL_TOGGLE(i)	(CCM_BASE_ADDR + CCM_SCTRL0_OFFSET + 0x10 * (i) + 12)
+#define CCM_CCGR_TOGGLE(i)	(CCM_BASE_ADDR + CCM_CCGR0_OFFSET + 0x10 * (i) + 12)
+#define CCM_ROOT_TARGET_TOGGLE(i)	(CCM_BASE_ADDR + CCM_ROOT0_TARGET_OFFSET + 0x80 * (i) + 12)
 
 #define HW_CCM_GPR_WR(i, v)		writel((v), CCM_GPR(i))
 #define HW_CCM_CCM_OBSERVE_WR(i, v)	writel((v), CCM_OBSERVE(i))
@@ -2055,6 +2051,11 @@ struct mxc_ccm_anatop_reg {
 #define HW_CCM_ROOT_TARGET_TOGGLE(i, v)	writel((v), CCM_ROOT_TARGET_TOGGLE(i))
 
 #define CCM_CLK_ON_MSK	0x03
+#define CCM_CLK_ON_N_N	0x00 /* Domain clocks not needed */
+#define CCM_CLK_ON_R_W	0x02 /* Domain clocks needed when in RUN and WAIT */
+
+/* CCGR Mapping */
+#define CCGR_IDX_DDR 19 /* CCM_CCGR19 */
 
 #define CCM_ROOT_TGT_POST_DIV_SHIFT	0
 #define CCM_ROOT_TGT_PRE_DIV_SHIFT	15
@@ -2086,7 +2087,6 @@ struct mxc_ccm_anatop_reg {
 #define CLK_ROOT_ALT5		0x05000000
 #define CLK_ROOT_ALT6		0x06000000
 #define CLK_ROOT_ALT7		0x07000000
-
 
 #define DRAM_CLK_ROOT_POST_DIV_MASK	0x00000007
 #define CLK_ROOT_POST_DIV_MASK	0x0000003f

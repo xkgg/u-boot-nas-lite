@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2007-2008 Semihalf
  *
  * Written by: Rafal Jaworowski <raj@semihalf.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
-#include <common.h>
 #include <api_public.h>
+#include <part.h>
+#include <scsi.h>
+#include <linux/types.h>
 
 #if defined(CONFIG_CMD_USB) && defined(CONFIG_USB_STORAGE)
 #include <usb.h>
@@ -24,7 +25,6 @@
 #endif
 
 #define errf(fmt, args...) do { printf("ERROR @ %s(): ", __func__); printf(fmt, ##args); } while (0)
-
 
 #define ENUM_IDE	0
 #define ENUM_USB	1
@@ -42,10 +42,6 @@ struct stor_spec {
 };
 
 static struct stor_spec specs[ENUM_MAX] = { { 0, 0, 0, 0, NULL }, };
-
-#ifndef CONFIG_SYS_MMC_MAX_DEVICE
-#define CONFIG_SYS_MMC_MAX_DEVICE	1
-#endif
 
 void dev_stor_init(void)
 {
@@ -70,13 +66,6 @@ void dev_stor_init(void)
 	specs[ENUM_SATA].type = DEV_TYP_STOR | DT_STOR_SATA;
 	specs[ENUM_SATA].name = "sata";
 #endif
-#if defined(CONFIG_SCSI)
-	specs[ENUM_SCSI].max_dev = CONFIG_SYS_SCSI_MAX_DEVICE;
-	specs[ENUM_SCSI].enum_started = 0;
-	specs[ENUM_SCSI].enum_ended = 0;
-	specs[ENUM_SCSI].type = DEV_TYP_STOR | DT_STOR_SCSI;
-	specs[ENUM_SCSI].name = "scsi";
-#endif
 #if defined(CONFIG_CMD_USB) && defined(CONFIG_USB_STORAGE)
 	specs[ENUM_USB].max_dev = USB_MAX_STOR_DEV;
 	specs[ENUM_USB].enum_started = 0;
@@ -100,6 +89,7 @@ static int dev_stor_get(int type, int *more, struct device_info *di)
 {
 	struct blk_desc *dd;
 	int found = 0;
+	int found_last = 0;
 	int i = 0;
 
 	/* Wasn't configured for this type, return 0 directly */
@@ -112,9 +102,13 @@ static int dev_stor_get(int type, int *more, struct device_info *di)
 			if (di->cookie ==
 			    (void *)blk_get_dev(specs[type].name, i)) {
 				i += 1;
+				found_last = 1;
 				break;
 			}
 		}
+
+		if (!found_last)
+			i = 0;
 	}
 
 	for (; i < specs[type].max_dev; i++) {
@@ -149,7 +143,6 @@ static int dev_stor_get(int type, int *more, struct device_info *di)
 	return found;
 }
 
-
 /* returns: ENUM_IDE, ENUM_USB etc. based on struct blk_desc */
 
 static int dev_stor_type(struct blk_desc *dd)
@@ -164,14 +157,12 @@ static int dev_stor_type(struct blk_desc *dd)
 	return ENUM_MAX;
 }
 
-
 /* returns: 0/1 whether cookie points to some device in this group */
 
 static int dev_is_stor(int type, struct device_info *di)
 {
 	return (dev_stor_type(di->cookie) == type) ? 1 : 0;
 }
-
 
 static int dev_enum_stor(int type, struct device_info *di)
 {
@@ -298,7 +289,6 @@ static int dev_stor_is_valid(int type, struct blk_desc *dd)
 	return 0;
 }
 
-
 int dev_open_stor(void *cookie)
 {
 	int type = dev_stor_type(cookie);
@@ -312,7 +302,6 @@ int dev_open_stor(void *cookie)
 	return API_ENODEV;
 }
 
-
 int dev_close_stor(void *cookie)
 {
 	/*
@@ -321,7 +310,6 @@ int dev_close_stor(void *cookie)
 	 */
 	return 0;
 }
-
 
 lbasize_t dev_read_stor(void *cookie, void *buf, lbasize_t len, lbastart_t start)
 {
@@ -343,5 +331,28 @@ lbasize_t dev_read_stor(void *cookie, void *buf, lbasize_t len, lbastart_t start
 	}
 
 	return dd->block_read(dd, start, len, buf);
+#endif	/* defined(CONFIG_BLK) */
+}
+
+lbasize_t dev_write_stor(void *cookie, void *buf, lbasize_t len, lbastart_t start)
+{
+	struct blk_desc *dd = (struct blk_desc *)cookie;
+	int type = dev_stor_type(dd);
+
+	if (type == ENUM_MAX)
+		return 0;
+
+	if (!dev_stor_is_valid(type, dd))
+		return 0;
+
+#ifdef CONFIG_BLK
+	return blk_dwrite(dd, start, len, buf);
+#else
+	if (dd->block_write == NULL) {
+		debugf("no block_write() for device 0x%08x\n", cookie);
+		return 0;
+	}
+
+	return dd->block_write(dd, start, len, buf);
 #endif	/* defined(CONFIG_BLK) */
 }

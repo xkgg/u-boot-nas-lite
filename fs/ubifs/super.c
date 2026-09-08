@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This file is part of UBIFS.
  *
  * Copyright (C) 2006-2008 Nokia Corporation.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Authors: Artem Bityutskiy (Битюцкий Артём)
  *          Adrian Hunter
@@ -16,6 +15,8 @@
  */
 
 #ifndef __UBOOT__
+#include <log.h>
+#include <dm/devres.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -28,15 +29,17 @@
 #include <linux/writeback.h>
 #else
 
-#include <common.h>
 #include <malloc.h>
 #include <memalign.h>
+#include <linux/bitops.h>
 #include <linux/bug.h>
 #include <linux/log2.h>
+#include <linux/printk.h>
 #include <linux/stat.h>
 #include <linux/err.h>
 #include "ubifs.h"
 #include <ubi_uboot.h>
+#include <linux/stringify.h>
 #include <mtd/ubi-user.h>
 
 struct dentry;
@@ -1334,7 +1337,10 @@ static int check_free_space(struct ubifs_info *c)
 static int mount_ubifs(struct ubifs_info *c)
 {
 	int err;
-	long long x, y;
+	long long x;
+#ifndef CONFIG_UBIFS_SILENCE_MSG
+	long long y;
+#endif
 	size_t sz;
 
 	c->ro_mount = !!(c->vfs_sb->s_flags & MS_RDONLY);
@@ -1613,7 +1619,9 @@ static int mount_ubifs(struct ubifs_info *c)
 		  c->vi.ubi_num, c->vi.vol_id, c->vi.name,
 		  c->ro_mount ? ", R/O mode" : "");
 	x = (long long)c->main_lebs * c->leb_size;
+#ifndef CONFIG_UBIFS_SILENCE_MSG
 	y = (long long)c->log_lebs * c->leb_size + c->max_bud_bytes;
+#endif
 	ubifs_msg(c, "LEB size: %d bytes (%d KiB), min./max. I/O unit sizes: %d bytes/%d bytes",
 		  c->leb_size, c->leb_size >> 10, c->min_io_size,
 		  c->max_write_size);
@@ -1749,10 +1757,14 @@ void ubifs_umount(struct ubifs_info *c)
 	kfree(c->bottom_up_buf);
 	ubifs_debugging_exit(c);
 #ifdef __UBOOT__
+	ubi_close_volume(c->ubi);
+	c->ubi = NULL;
+	mutex_unlock(&c->umount_mutex);
 	/* Finally free U-Boot's global copy of superblock */
 	if (ubifs_sb != NULL) {
-		free(ubifs_sb->s_fs_info);
-		free(ubifs_sb);
+		kfree(ubifs_sb->s_fs_info);
+		kfree(ubifs_sb);
+		ubifs_sb = NULL;
 	}
 #endif
 }
@@ -2050,9 +2062,10 @@ static void ubifs_put_super(struct super_block *sb)
 	ubifs_umount(c);
 #ifndef __UBOOT__
 	bdi_destroy(&c->bdi);
-#endif
 	ubi_close_volume(c->ubi);
+	c->ubi = NULL;
 	mutex_unlock(&c->umount_mutex);
+#endif
 }
 #endif
 
@@ -2311,6 +2324,7 @@ static int ubifs_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_umount;
 	}
 #else
+	ubifs_iput(root);
 	sb->s_root = NULL;
 #endif
 
@@ -2319,6 +2333,9 @@ static int ubifs_fill_super(struct super_block *sb, void *data, int silent)
 
 out_umount:
 	ubifs_umount(c);
+#ifdef __UBOOT__
+	goto out;
+#endif
 out_unlock:
 	mutex_unlock(&c->umount_mutex);
 #ifndef __UBOOT__
@@ -2327,6 +2344,7 @@ out_bdi:
 out_close:
 #endif
 	ubi_close_volume(c->ubi);
+	c->ubi = NULL;
 out:
 	return err;
 }
@@ -2356,7 +2374,9 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags)
 		return ERR_PTR(err);
 	}
 
+#ifndef __UBOOT__
 	INIT_HLIST_NODE(&s->s_instances);
+#endif
 	INIT_LIST_HEAD(&s->s_inodes);
 	s->s_time_gran = 1000000000;
 	s->s_flags = flags;
@@ -2405,7 +2425,7 @@ retry:
 	if (!s) {
 		spin_unlock(&sb_lock);
 		s = alloc_super(type, flags);
-		if (!s)
+		if (IS_ERR_OR_NULL(s))
 			return ERR_PTR(-ENOMEM);
 #ifndef __UBOOT__
 		goto retry;
@@ -2425,20 +2445,17 @@ retry:
 #ifndef __UBOOT__
 	strlcpy(s->s_id, type->name, sizeof(s->s_id));
 	list_add_tail(&s->s_list, &super_blocks);
-#else
-	strncpy(s->s_id, type->name, sizeof(s->s_id));
-#endif
 	hlist_add_head(&s->s_instances, &type->fs_supers);
-#ifndef __UBOOT__
 	spin_unlock(&sb_lock);
 	get_filesystem(type);
 	register_shrinker(&s->s_shrink);
+#else
+	strncpy(s->s_id, type->name, sizeof(s->s_id));
 #endif
 	return s;
 }
 
 EXPORT_SYMBOL(sget);
-
 
 static struct dentry *ubifs_mount(struct file_system_type *fs_type, int flags,
 			const char *name, void *data)
@@ -2457,7 +2474,7 @@ static struct dentry *ubifs_mount(struct file_system_type *fs_type, int flags,
 	 */
 	ubi = open_ubi(name, UBI_READONLY);
 	if (IS_ERR(ubi)) {
-		pr_err("UBIFS error (pid: %d): cannot open \"%s\", error %d",
+		pr_err("UBIFS error (pid: %d): cannot open \"%s\", error %d\n",
 		       current->pid, name, (int)PTR_ERR(ubi));
 		return ERR_CAST(ubi);
 	}
@@ -2599,7 +2616,7 @@ int ubifs_init(void)
 	 * UBIFS_BLOCK_SIZE. It is assumed that both are powers of 2.
 	 */
 	if (PAGE_CACHE_SIZE < UBIFS_BLOCK_SIZE) {
-		pr_err("UBIFS error (pid %d): VFS page cache size is %u bytes, but UBIFS requires at least 4096 bytes",
+		pr_err("UBIFS error (pid %d): VFS page cache size is %u bytes, but UBIFS requires at least 4096 bytes\n",
 		       current->pid, (unsigned int)PAGE_CACHE_SIZE);
 		return -EINVAL;
 	}
@@ -2628,7 +2645,7 @@ int ubifs_init(void)
 
 	err = register_filesystem(&ubifs_fs_type);
 	if (err) {
-		pr_err("UBIFS error (pid %d): cannot register file system, error %d",
+		pr_err("UBIFS error (pid %d): cannot register file system, error %d\n",
 		       current->pid, err);
 		goto out_dbg;
 	}

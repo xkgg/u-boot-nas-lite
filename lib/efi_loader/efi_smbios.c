@@ -1,32 +1,85 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  EFI application tables support
  *
  *  Copyright (c) 2016 Alexander Graf
- *
- *  SPDX-License-Identifier:     GPL-2.0+
  */
 
-#include <common.h>
+#define LOG_CATEGORY LOGC_EFI
+
 #include <efi_loader.h>
-#include <inttypes.h>
+#include <log.h>
+#include <malloc.h>
+#include <mapmem.h>
 #include <smbios.h>
+#include <linux/sizes.h>
+#include <asm/global_data.h>
 
-static const efi_guid_t smbios_guid = SMBIOS_TABLE_GUID;
+DECLARE_GLOBAL_DATA_PTR;
 
-void efi_smbios_register(void)
+const efi_guid_t smbios3_guid = SMBIOS3_TABLE_GUID;
+
+enum {
+	TABLE_SIZE	= SZ_4K,
+};
+
+/*
+ * Install the SMBIOS table as a configuration table.
+ *
+ * Return:	status code
+ */
+efi_status_t efi_smbios_register(void)
 {
-	/* Map within the low 32 bits, to allow for 32bit SMBIOS tables */
-	uint64_t dmi = 0xffffffff;
-	/* Reserve 4kb for SMBIOS */
-	uint64_t pages = 1;
-	int memtype = EFI_RUNTIME_SERVICES_DATA;
+	ulong addr;
+	efi_status_t ret;
+	void *buf;
 
-	if (efi_allocate_pages(1, memtype, pages, &dmi) != EFI_SUCCESS)
-		return;
+	addr = gd_smbios_start();
+	if (!addr) {
+		log_err("No SMBIOS tables to install\n");
+		return EFI_NOT_FOUND;
+	}
 
-	/* Generate SMBIOS tables */
-	write_smbios_table(dmi);
+	/* Mark space used for tables */
+	ret = efi_add_memory_map(addr, TABLE_SIZE, EFI_RUNTIME_SERVICES_DATA);
+	if (ret)
+		return ret;
 
-	/* And expose them to our EFI payload */
-	efi_install_configuration_table(&smbios_guid, (void*)(uintptr_t)dmi);
+	log_debug("EFI using SMBIOS tables at %lx\n", addr);
+
+	/* Install SMBIOS information as configuration table */
+	buf = map_sysmem(addr, 0);
+	ret = efi_install_configuration_table(&smbios3_guid, buf);
+	unmap_sysmem(buf);
+
+	return ret;
 }
+
+static int install_smbios_table(void)
+{
+	ulong addr;
+	void *buf;
+
+	if (!IS_ENABLED(CONFIG_GENERATE_SMBIOS_TABLE) ||
+	    IS_ENABLED(CONFIG_X86) ||
+	    IS_ENABLED(CONFIG_QFW_SMBIOS))
+		return 0;
+
+	/* Align the table to a 4KB boundary to keep EFI happy */
+	buf = memalign(SZ_4K, TABLE_SIZE);
+	if (!buf)
+		return log_msg_ret("mem", -ENOMEM);
+
+	addr = map_to_sysmem(buf);
+	if (!write_smbios_table(addr)) {
+		log_err("Failed to write SMBIOS table\n");
+		return log_msg_ret("smbios", -EINVAL);
+	}
+
+	/* Make a note of where we put it */
+	log_debug("SMBIOS tables written to %lx\n", addr);
+	gd->arch.smbios_start = addr;
+
+	return 0;
+}
+EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, install_smbios_table);

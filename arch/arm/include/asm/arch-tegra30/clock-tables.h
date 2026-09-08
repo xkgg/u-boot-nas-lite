@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2010-2012, NVIDIA CORPORATION.  All rights reserved.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 /* Tegra30 clock PLL tables */
@@ -24,6 +23,7 @@ enum clock_id {
 	CLOCK_ID_XCPU = CLOCK_ID_FIRST_SIMPLE,
 	CLOCK_ID_EPCI,
 	CLOCK_ID_SFROM32KHZ,
+	CLOCK_ID_DISPLAY2,
 
 	/* These are the base clocks (inputs to the Tegra SOC) */
 	CLOCK_ID_32KHZ,
@@ -31,7 +31,6 @@ enum clock_id {
 	CLOCK_ID_CLK_M,
 
 	CLOCK_ID_COUNT,	/* number of PLLs */
-	CLOCK_ID_DISPLAY2,	/* Tegra3, placeholder */
 	CLOCK_ID_NONE = -1,
 };
 
@@ -191,9 +190,9 @@ enum periph_id {
 	PERIPH_ID_ACTMON,
 
 	/* 24 */
-	PERIPH_ID_EX_RESERVED24,
-	PERIPH_ID_EX_RESERVED25,
-	PERIPH_ID_EX_RESERVED26,
+	PERIPH_ID_EXTPERIPH1,
+	PERIPH_ID_EXTPERIPH2,
+	PERIPH_ID_EXTPERIPH3,
 	PERIPH_ID_EX_RESERVED27,
 	PERIPH_ID_SATA,
 	PERIPH_ID_HDA,

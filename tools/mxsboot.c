@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Freescale i.MX28 image generator
  *
  * Copyright (C) 2011 Marek Vasut <marek.vasut@gmail.com>
  * on behalf of DENX Software Engineering GmbH
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <fcntl.h>
@@ -479,7 +478,7 @@ static int mx28_create_nand_image(int infd, int outfd)
 		goto err0;
 	}
 
-	memset(buf, 0, size);
+	memset(buf, 0xff, size);
 
 	fcb = mx28_nand_get_fcb(MAX_BOOTSTREAM_SIZE);
 	if (!fcb) {

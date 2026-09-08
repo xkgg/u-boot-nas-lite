@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016, NVIDIA CORPORATION.
- *
- * SPDX-License-Identifier: GPL-2.0
  */
 
-#include <common.h>
 #include <dm.h>
+#include <malloc.h>
 #include <power-domain.h>
 #include <asm/io.h>
 #include <asm/power-domain.h>
@@ -35,6 +34,20 @@ int sandbox_power_domain_test_off(struct udevice *dev)
 	return power_domain_off(&sbrt->pd);
 }
 
+int sandbox_power_domain_test_on_ll(struct udevice *dev)
+{
+	struct sandbox_power_domain_test *sbrt = dev_get_priv(dev);
+
+	return power_domain_on_lowlevel(&sbrt->pd);
+}
+
+int sandbox_power_domain_test_off_ll(struct udevice *dev)
+{
+	struct sandbox_power_domain_test *sbrt = dev_get_priv(dev);
+
+	return power_domain_off_lowlevel(&sbrt->pd);
+}
+
 int sandbox_power_domain_test_free(struct udevice *dev)
 {
 	struct sandbox_power_domain_test *sbrt = dev_get_priv(dev);
@@ -51,5 +64,6 @@ U_BOOT_DRIVER(sandbox_power_domain_test) = {
 	.name = "sandbox_power_domain_test",
 	.id = UCLASS_MISC,
 	.of_match = sandbox_power_domain_test_ids,
-	.priv_auto_alloc_size = sizeof(struct sandbox_power_domain_test),
+	.priv_auto	= sizeof(struct sandbox_power_domain_test),
+	.flags = DM_FLAG_DEFAULT_PD_CTRL_OFF,
 };

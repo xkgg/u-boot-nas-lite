@@ -4,16 +4,19 @@
  * SPDX-License-Identifier:     GPL-2.0+
  */
 
-#include <common.h>
+#include <asm/global_data.h>
 #include <dm.h>
 #include <fdtdec.h>
 #include <fdt_support.h>
 #include <inttypes.h>
+#include <log.h>
+#include <malloc.h>
 #include <nand.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -82,9 +85,11 @@ struct rk_nand {
 };
 
 static struct rk_nand *g_rk_nand;
-static u32 nand_page_size;
+static u32 nand_page_size_bytes;
 static u32 nand_page_num;
 static u32 nand_block_num;
+
+#define nand_page_size nand_page_size_bytes
 
 static void nandc_init(struct rk_nand *rknand)
 {
@@ -252,7 +257,7 @@ static void read_flash_id(struct rk_nand *rknand, uint8_t *id)
 		printf("NAND:%x %x\n", id[0], id[1]);
 }
 
-#ifdef CONFIG_NAND_ROCKCHIP_DT
+#if !defined(CONFIG_SPL_BUILD) && defined(CONFIG_NAND_ROCKCHIP_DT)
 static const struct udevice_id rockchip_nandc_ids[] = {
 	{ .compatible = "rockchip,rk-nandc" },
 	{ }
@@ -314,7 +319,7 @@ static int rockchip_nandc_probe(struct udevice *dev)
 	g_rk_nand = rknand;
 	rknand->dev = dev;
 
-	node = fdtdec_next_compatible(blob, 0, COMPAT_ROCKCHIP_NANDC);
+	node = fdt_node_offset_by_compatible(blob, 0, "rockchip,rk-nandc");
 
 	if (node < 0) {
 		printf("Nand node not found\n");
@@ -424,7 +429,7 @@ U_BOOT_DRIVER(rk_nandc_v9) = {
 	.of_match       = rockchip_nandc_ids,
 	.bind		= rockchip_nandc_bind,
 	.probe          = rockchip_nandc_probe,
-	.priv_auto_alloc_size = sizeof(struct rk_nand),
+	.priv_auto = sizeof(struct rk_nand),
 };
 
 void board_nand_init(void)
@@ -433,7 +438,7 @@ void board_nand_init(void)
 	int ret;
 
 	ret = uclass_get_device_by_driver(UCLASS_MTD,
-					  DM_GET_DRIVER(rk_nandc_v9),
+					  DM_DRIVER_GET(rk_nandc_v9),
 					  &dev);
 	if (ret && ret != -ENODEV)
 		pr_err("Failed to initialize NAND controller. (error %d)\n",
@@ -470,7 +475,7 @@ void board_nand_init(void)
 	if (g_rk_nand)
 		return;
 
-	node = fdtdec_next_compatible(blob, 0, COMPAT_ROCKCHIP_NANDC);
+	node = fdt_node_offset_by_compatible(blob, 0, "rockchip,rk-nandc");
 
 	if (node < 0) {
 		printf("Nand node not found\n");
@@ -570,6 +575,12 @@ int rk_nand_init(void)
 		return -ENODEV;
 }
 #endif
+
+#undef nand_page_size
+unsigned int nand_page_size(void)
+{
+	return nand_page_size_bytes;
+}
 
 void nand_deselect(void) {}
 

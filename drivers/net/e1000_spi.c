@@ -1,6 +1,9 @@
-#include <common.h>
+#include <command.h>
 #include <console.h>
+#include <linux/delay.h>
 #include "e1000.h"
+#include <malloc.h>
+#include <vsprintf.h>
 #include <linux/compiler.h>
 
 /*-----------------------------------------------------------------------
@@ -76,9 +79,6 @@ static inline struct e1000_hw *e1000_hw_from_spi(struct spi_slave *spi)
 {
 	return container_of(spi, struct e1000_hw, spi);
 }
-
-/* Not sure why all of these are necessary */
-void spi_init(void)   { /* Nothing to do */ }
 
 struct spi_slave *spi_setup_slave(unsigned int bus, unsigned int cs,
 		unsigned int max_hz, unsigned int mode)
@@ -317,8 +317,8 @@ static int e1000_spi_eeprom_program(struct e1000_hw *hw,
 	return 0;
 }
 
-static int do_e1000_spi_show(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
-		int argc, char * const argv[])
+static int do_e1000_spi_show(struct cmd_tbl *cmdtp, struct e1000_hw *hw,
+			     int argc, char *const argv[])
 {
 	unsigned int length = 0;
 	u16 i, offset = 0;
@@ -386,8 +386,8 @@ static int do_e1000_spi_show(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	return 0;
 }
 
-static int do_e1000_spi_dump(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
-		int argc, char * const argv[])
+static int do_e1000_spi_dump(struct cmd_tbl *cmdtp, struct e1000_hw *hw,
+			     int argc, char *const argv[])
 {
 	unsigned int length;
 	u16 offset;
@@ -399,7 +399,7 @@ static int do_e1000_spi_dump(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	}
 
 	/* Parse the arguments */
-	dest = (void *)simple_strtoul(argv[0], NULL, 16);
+	dest = (void *)hextoul(argv[0], NULL);
 	offset = simple_strtoul(argv[1], NULL, 0);
 	length = simple_strtoul(argv[2], NULL, 0);
 
@@ -431,8 +431,8 @@ static int do_e1000_spi_dump(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	return 0;
 }
 
-static int do_e1000_spi_program(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
-		int argc, char * const argv[])
+static int do_e1000_spi_program(struct cmd_tbl *cmdtp, struct e1000_hw *hw,
+				int argc, char *const argv[])
 {
 	unsigned int length;
 	const void *source;
@@ -444,7 +444,7 @@ static int do_e1000_spi_program(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	}
 
 	/* Parse the arguments */
-	source = (const void *)simple_strtoul(argv[0], NULL, 16);
+	source = (const void *)hextoul(argv[0], NULL);
 	offset = simple_strtoul(argv[1], NULL, 0);
 	length = simple_strtoul(argv[2], NULL, 0);
 
@@ -466,12 +466,13 @@ static int do_e1000_spi_program(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	return 0;
 }
 
-static int do_e1000_spi_checksum(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
-		int argc, char * const argv[])
+static int do_e1000_spi_checksum(struct cmd_tbl *cmdtp, struct e1000_hw *hw,
+				 int argc, char *const argv[])
 {
 	uint16_t i, length, checksum = 0, checksum_reg;
 	uint16_t *buffer;
 	bool upd;
+	int ret = 0;
 
 	if (argc == 0)
 		upd = 0;
@@ -493,14 +494,15 @@ static int do_e1000_spi_checksum(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	/* Acquire the EEPROM */
 	if (e1000_acquire_eeprom(hw)) {
 		E1000_ERR(hw, "EEPROM SPI cannot be acquired!\n");
-		return 1;
+		ret = 1;
+		goto free_exit;
 	}
 
 	/* Read the EEPROM */
 	if (e1000_spi_eeprom_dump(hw, buffer, 0, length, true) < 0) {
 		E1000_ERR(hw, "Interrupted!\n");
-		e1000_release_eeprom(hw);
-		return 1;
+		ret = 1;
+		goto release_exit;
 	}
 
 	/* Compute the checksum and read the expected value */
@@ -513,8 +515,8 @@ static int do_e1000_spi_checksum(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	if (checksum_reg == checksum) {
 		printf("%s: INFO: EEPROM checksum is correct! (0x%04hx)\n",
 				hw->name, checksum);
-		e1000_release_eeprom(hw);
-		return 0;
+		ret = 0;
+		goto release_exit;
 	}
 
 	/* Hrm, verification failed, print an error */
@@ -524,8 +526,8 @@ static int do_e1000_spi_checksum(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 
 	/* If they didn't ask us to update it, just return an error */
 	if (!upd) {
-		e1000_release_eeprom(hw);
-		return 1;
+		ret = 1;
+		goto release_exit;
 	}
 
 	/* Ok, correct it! */
@@ -534,16 +536,19 @@ static int do_e1000_spi_checksum(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
 	if (e1000_spi_eeprom_program(hw, &buffer[i], i * sizeof(uint16_t),
 			sizeof(uint16_t), true)) {
 		E1000_ERR(hw, "Interrupted!\n");
-		e1000_release_eeprom(hw);
-		return 1;
+		ret = 1;
+		/* goto release_exit; */
 	}
 
+release_exit:
 	e1000_release_eeprom(hw);
-	return 0;
+free_exit:
+	free(buffer);
+	return ret;
 }
 
-int do_e1000_spi(cmd_tbl_t *cmdtp, struct e1000_hw *hw,
-		int argc, char * const argv[])
+int do_e1000_spi(struct cmd_tbl *cmdtp, struct e1000_hw *hw,
+		 int argc, char *const argv[])
 {
 	if (argc < 1) {
 		cmd_usage(cmdtp);

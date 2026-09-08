@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2014 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#define LOG_CATEGORY	UCLASS_PCH
+
 #include <dm.h>
+#include <log.h>
 #include <pch.h>
 
 #define GPIO_BASE	0x48
@@ -38,7 +39,7 @@ static int pch9_get_gpio_base(struct udevice *dev, u32 *gbasep)
 	 */
 	dm_pci_read_config32(dev, GPIO_BASE, &base);
 	if (base == 0x00000000 || base == 0xffffffff) {
-		debug("%s: unexpected BASE value\n", __func__);
+		log_debug("unexpected BASE value\n");
 		return -ENODEV;
 	}
 
@@ -59,7 +60,7 @@ static int pch9_get_io_base(struct udevice *dev, u32 *iobasep)
 
 	dm_pci_read_config32(dev, IO_BASE, &base);
 	if (base == 0x00000000 || base == 0xffffffff) {
-		debug("%s: unexpected BASE value\n", __func__);
+		log_debug("unexpected BASE value\n");
 		return -ENODEV;
 	}
 

@@ -1,15 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Atmel PIO pinctrl driver
  *
  * Copyright (C) 2016 Atmel Corporation
  *               Wenyou.Yang <wenyou.yang@atmel.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
+#include <asm/global_data.h>
+#include <dm/device-internal.h>
+#include <dm/lists.h>
 #include <dm/pinctrl.h>
+#include <asm/hardware.h>
+#include <linux/bitops.h>
 #include <linux/io.h>
 #include <linux/err.h>
 #include <mach/at91_pio.h>
@@ -37,6 +41,9 @@ struct at91_pinctrl_priv {
 #define OUTPUT			BIT(7)
 #define OUTPUT_VAL_SHIFT	8
 #define OUTPUT_VAL		(0x1 << OUTPUT_VAL_SHIFT)
+#define SLEWRATE_SHIFT	9
+#define SLEWRATE_MASK	0x1
+#define SLEWRATE	(SLEWRATE_MASK << SLEWRATE_SHIFT)
 #define DEBOUNCE		BIT(16)
 #define DEBOUNCE_VAL_SHIFT	17
 #define DEBOUNCE_VAL		(0x3fff << DEBOUNCE_VAL_SHIFT)
@@ -50,10 +57,22 @@ struct at91_pinctrl_priv {
  * DRIVE_STRENGTH_DEFAULT is just a placeholder to avoid changing the drive
  * strength when there is no dt config for it.
  */
-#define DRIVE_STRENGTH_DEFAULT	(0 << DRIVE_STRENGTH_SHIFT)
-#define DRIVE_STRENGTH_LOW	(1 << DRIVE_STRENGTH_SHIFT)
-#define DRIVE_STRENGTH_MED	(2 << DRIVE_STRENGTH_SHIFT)
-#define DRIVE_STRENGTH_HI	(3 << DRIVE_STRENGTH_SHIFT)
+enum drive_strength_bit {
+	DRIVE_STRENGTH_BIT_DEF,
+	DRIVE_STRENGTH_BIT_LOW,
+	DRIVE_STRENGTH_BIT_MED,
+	DRIVE_STRENGTH_BIT_HI,
+};
+
+#define DRIVE_STRENGTH_BIT_MSK(name)	(DRIVE_STRENGTH_BIT_##name << \
+					 DRIVE_STRENGTH_SHIFT)
+
+enum slewrate_bit {
+	SLEWRATE_BIT_DIS,
+	SLEWRATE_BIT_ENA,
+};
+
+#define SLEWRATE_BIT_MSK(name)		(SLEWRATE_BIT_##name << SLEWRATE_SHIFT)
 
 enum at91_mux {
 	AT91_MUX_GPIO = 0,
@@ -90,6 +109,7 @@ struct at91_pinctrl_mux_ops {
 	void (*disable_schmitt_trig)(struct at91_port *pio, u32 mask);
 	void (*set_drivestrength)(struct at91_port *pio, u32 pin,
 				  u32 strength);
+	void (*set_slewrate)(struct at91_port *pio, u32 pin, u32 slewrate);
 };
 
 static u32 two_bit_pin_value_shift_amount(u32 pin)
@@ -238,9 +258,50 @@ static void at91_mux_sam9x5_set_drivestrength(struct at91_port *pio,
 
 	/* strength is inverse on SAM9x5s with our defines
 	 * 0 = hi, 1 = med, 2 = low, 3 = rsvd */
-	setting = DRIVE_STRENGTH_HI - setting;
+	setting = DRIVE_STRENGTH_BIT_MSK(HI) - setting;
 
 	set_drive_strength(reg, pin, setting);
+}
+
+static void at91_mux_sam9x60_set_drivestrength(struct at91_port *pio, u32 pin,
+					       u32 setting)
+{
+	void *reg = &pio->driver12;
+	u32 tmp;
+
+	if (setting <= DRIVE_STRENGTH_BIT_DEF ||
+	    setting == DRIVE_STRENGTH_BIT_MED ||
+	    setting > DRIVE_STRENGTH_BIT_HI)
+		return;
+
+	tmp = readl(reg);
+
+	/* Strength is 0: low, 1: hi */
+	if (setting == DRIVE_STRENGTH_BIT_LOW)
+		tmp &= ~BIT(pin);
+	else
+		tmp |= BIT(pin);
+
+	writel(tmp, reg);
+}
+
+static void at91_mux_sam9x60_set_slewrate(struct at91_port *pio, u32 pin,
+					  u32 setting)
+{
+	void *reg = &pio->reserved12[3];
+	u32 tmp;
+
+	if (setting < SLEWRATE_BIT_DIS || setting > SLEWRATE_BIT_ENA)
+		return;
+
+	tmp = readl(reg);
+
+	if (setting == SLEWRATE_BIT_DIS)
+		tmp &= ~BIT(pin);
+	else
+		tmp |= BIT(pin);
+
+	writel(tmp, reg);
 }
 
 static struct at91_pinctrl_mux_ops at91rm9200_ops = {
@@ -271,6 +332,19 @@ static struct at91_pinctrl_mux_ops sama5d3_ops = {
 	.set_pulldown	= at91_mux_pio3_set_pulldown,
 	.disable_schmitt_trig = at91_mux_pio3_disable_schmitt_trig,
 	.set_drivestrength = at91_mux_sama5d3_set_drivestrength,
+};
+
+static struct at91_pinctrl_mux_ops sam9x60_ops = {
+	.mux_A_periph	= at91_mux_pio3_set_A_periph,
+	.mux_B_periph	= at91_mux_pio3_set_B_periph,
+	.mux_C_periph	= at91_mux_pio3_set_C_periph,
+	.mux_D_periph	= at91_mux_pio3_set_D_periph,
+	.set_deglitch	= at91_mux_pio3_set_deglitch,
+	.set_debounce	= at91_mux_pio3_set_debounce,
+	.set_pulldown	= at91_mux_pio3_set_pulldown,
+	.disable_schmitt_trig = at91_mux_pio3_disable_schmitt_trig,
+	.set_drivestrength = at91_mux_sam9x60_set_drivestrength,
+	.set_slewrate   = at91_mux_sam9x60_set_slewrate,
 };
 
 static void at91_mux_gpio_disable(struct at91_port *pio, u32 mask)
@@ -339,6 +413,9 @@ static int at91_pinconf_set(struct at91_pinctrl_mux_ops *ops,
 	if (ops->set_drivestrength)
 		ops->set_drivestrength(pio, pin,
 			(config & DRIVE_STRENGTH) >> DRIVE_STRENGTH_SHIFT);
+	if (ops->set_slewrate)
+		ops->set_slewrate(pio, pin,
+			(config & SLEWRATE) >> SLEWRATE_SHIFT);
 
 	return 0;
 }
@@ -417,21 +494,58 @@ const struct pinctrl_ops at91_pinctrl_ops  = {
 	.set_state = at91_pinctrl_set_state,
 };
 
+/**
+ * at91_pinctrl_bind() - Iterates through all subnodes of the pinctrl device
+ * in the DT and binds them to U-Boot's device model. Each subnode
+ * typically represents a GPIO controller or pin configuration data.
+ *
+ * @dev: Pointer to the pinctrl device
+ *
+ * Returns 0 on success or negative error on failure
+ */
+static int at91_pinctrl_bind(struct udevice *dev)
+{
+	ofnode gpio_node;
+	struct udevice *gpio;
+	int ret;
+
+	ofnode_for_each_subnode(gpio_node, dev_ofnode(dev)) {
+		ret = lists_bind_fdt(dev, gpio_node, &gpio, NULL, false);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int at91_pinctrl_probe(struct udevice *dev)
 {
 	struct at91_pinctrl_priv *priv = dev_get_priv(dev);
 	fdt_addr_t addr_base;
+	struct udevice *gpio_node;
 	int index;
 
-	for (index = 0; index < MAX_GPIO_BANKS; index++) {
-		addr_base = devfdt_get_addr_index(dev, index);
-		if (addr_base == FDT_ADDR_T_NONE)
-			break;
+	if (list_empty(&dev->child_head)) {
+		for (index = 0; index < MAX_GPIO_BANKS; index++) {
+			addr_base = devfdt_get_addr_index(dev, index);
+			if (addr_base == FDT_ADDR_T_NONE)
+				break;
 
-		priv->reg_base[index] = (struct at91_port *)addr_base;
+			priv->reg_base[index] = (struct at91_port *)addr_base;
+		}
+	} else {
+		index = 0;
+		list_for_each_entry(gpio_node, &dev->child_head, sibling_node) {
+			addr_base = dev_read_addr(gpio_node);
+			if (addr_base == FDT_ADDR_T_NONE)
+				break;
+
+			priv->reg_base[index] = (struct at91_port *)addr_base;
+			index++;
+		}
 	}
 
-	priv->nbanks = index;
+	priv->nbanks = index < MAX_GPIO_BANKS ? index : MAX_GPIO_BANKS;
 
 	return 0;
 }
@@ -440,14 +554,18 @@ static const struct udevice_id at91_pinctrl_match[] = {
 	{ .compatible = "atmel,sama5d3-pinctrl", .data = (ulong)&sama5d3_ops },
 	{ .compatible = "atmel,at91sam9x5-pinctrl", .data = (ulong)&at91sam9x5_ops },
 	{ .compatible = "atmel,at91rm9200-pinctrl", .data = (ulong)&at91rm9200_ops },
+	{ .compatible = "microchip,sam9x60-pinctrl", .data = (ulong)&sam9x60_ops },
 	{}
 };
 
-U_BOOT_DRIVER(at91_pinctrl) = {
-	.name = "pinctrl_at91",
+U_BOOT_DRIVER(atmel_sama5d3_pinctrl) = {
+	.name = "atmel_sama5d3_pinctrl",
 	.id = UCLASS_PINCTRL,
 	.of_match = at91_pinctrl_match,
 	.probe = at91_pinctrl_probe,
-	.priv_auto_alloc_size = sizeof(struct at91_pinctrl_priv),
+	.bind = at91_pinctrl_bind,
+	.priv_auto	= sizeof(struct at91_pinctrl_priv),
 	.ops = &at91_pinctrl_ops,
 };
+
+DM_DRIVER_ALIAS(atmel_sama5d3_pinctrl, atmel_at91rm9200_pinctrl)

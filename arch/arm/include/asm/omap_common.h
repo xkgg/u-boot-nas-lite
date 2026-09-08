@@ -1,19 +1,21 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2010
  * Texas Instruments, <www.ti.com>
  *
  * Aneesh V <aneesh@ti.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef	_OMAP_COMMON_H_
 #define	_OMAP_COMMON_H_
 
 #ifndef __ASSEMBLY__
 
-#include <common.h>
+#include <linux/types.h>
 
 #define NUM_SYS_CLKS	7
+#define SYS_PTV		2	/* Divisor: 2^(PTV+1) => 8 */
+
+struct bd_info;
 
 struct prcm_regs {
 	/* cm1.ckgen */
@@ -361,6 +363,10 @@ struct prcm_regs {
 	/* IPU */
 	u32 cm_ipu_clkstctrl;
 	u32 cm_ipu_i2c5_clkctrl;
+	u32 cm_ipu1_clkstctrl;
+	u32 cm_ipu1_ipu1_clkctrl;
+	u32 cm_ipu2_clkstctrl;
+	u32 cm_ipu2_ipu2_clkctrl;
 
 	/*l3main1 edma*/
 	u32 cm_l3main1_tptc1_clkctrl;
@@ -484,7 +490,7 @@ struct omap_sys_ctrl_regs {
 	u32 ctrl_core_sma_sw_1;
 };
 
-#if defined(CONFIG_OMAP44XX) || defined(CONFIG_OMAP54XX)
+#if defined(CONFIG_OMAP54XX)
 struct dpll_params {
 	u32 m;
 	u32 n;
@@ -517,7 +523,7 @@ struct dpll_regs {
 	u32 cm_div_h23_dpll;
 	u32 cm_div_h24_dpll;
 };
-#endif /* CONFIG_OMAP44XX || CONFIG_OMAP54XX */
+#endif /* CONFIG_OMAP54XX */
 
 struct dplls {
 	const struct dpll_params *mpu;
@@ -541,7 +547,7 @@ struct pmic_data {
 	int (*pmic_write)(u8 sa, u8 reg_addr, u8 reg_data);
 };
 
-#if defined(CONFIG_OMAP44XX) || defined(CONFIG_OMAP54XX)
+#if defined(CONFIG_OMAP54XX)
 enum {
 	OPP_LOW,
 	OPP_NOM,
@@ -587,7 +593,7 @@ struct vcores_data {
 	struct volts eve;
 	struct volts iva;
 };
-#endif /* CONFIG_OMAP44XX || CONFIG_OMAP54XX */
+#endif /* CONFIG_OMAP54XX */
 
 extern struct prcm_regs const **prcm;
 extern struct prcm_regs const omap5_es1_prcm;
@@ -596,6 +602,8 @@ extern struct prcm_regs const omap4_prcm;
 extern struct prcm_regs const dra7xx_prcm;
 extern struct dplls const **dplls_data;
 extern struct dplls dra7xx_dplls;
+extern struct dplls dra72x_dplls;
+extern struct dplls dra76x_dplls;
 extern struct vcores_data const **omap_vcores;
 extern const u32 sys_clk_array[8];
 extern struct omap_sys_ctrl_regs const **ctrl;
@@ -607,6 +615,7 @@ extern struct omap_sys_ctrl_regs const dra7xx_ctrl;
 
 extern struct pmic_data tps659038;
 extern struct pmic_data lp8733;
+extern struct pmic_data lp87565;
 
 void hw_data_init(void);
 
@@ -617,7 +626,7 @@ const struct dpll_params *get_iva_dpll_params(struct dplls const *);
 const struct dpll_params *get_usb_dpll_params(struct dplls const *);
 const struct dpll_params *get_abe_dpll_params(struct dplls const *);
 
-#if defined(CONFIG_OMAP44XX) || defined(CONFIG_OMAP54XX)
+#if defined(CONFIG_OMAP54XX)
 void do_enable_clocks(u32 const *clk_domains,
 		      u32 const *clk_modules_hw_auto,
 		      u32 const *clk_modules_explicit_en,
@@ -626,8 +635,14 @@ void do_enable_clocks(u32 const *clk_domains,
 void do_disable_clocks(u32 const *clk_domains,
 		       u32 const *clk_modules_disable,
 		       u8 wait_for_disable);
-#endif /* CONFIG_OMAP44XX || CONFIG_OMAP54XX */
+#endif /* CONFIG_OMAP54XX */
 
+void do_enable_ipu_clocks(u32 const *clk_domains,
+			  u32 const *clk_modules_hw_auto,
+			  u32 const *clk_modules_explicit_en,
+			  u8 wait_for_enable);
+void enable_ipu1_clocks(void);
+void enable_ipu2_clocks(void);
 void setup_post_dividers(u32 const base,
 			const struct dpll_params *params);
 u32 omap_ddr_clk(void);
@@ -638,9 +653,9 @@ void enable_basic_uboot_clocks(void);
 void enable_usb_clocks(int index);
 void disable_usb_clocks(int index);
 
-#if defined(CONFIG_OMAP44XX) || defined(CONFIG_OMAP54XX)
+#if defined(CONFIG_OMAP54XX)
 void scale_vcores(struct vcores_data const *);
-#endif /* CONFIG_OMAP44XX || CONFIG_OMAP54XX */
+#endif /* CONFIG_OMAP54XX */
 int get_voltrail_opp(int rail_offset);
 u32 get_offset_code(u32 volt_offset, struct pmic_data *pmic);
 void do_scale_vcore(u32 vcore_reg, u32 volt_mv, struct pmic_data *pmic);
@@ -681,9 +696,9 @@ void omap_die_id(unsigned int *die_id);
 void gpi2c_init(void);
 
 /* Common FDT Fixups */
-int ft_hs_disable_rng(void *fdt, bd_t *bd);
-int ft_hs_fixup_dram(void *fdt, bd_t *bd);
-int ft_hs_add_tee(void *fdt, bd_t *bd);
+int ft_hs_disable_rng(void *fdt, struct bd_info *bd);
+int ft_hs_fixup_dram(void *fdt, struct bd_info *bd);
+int ft_hs_add_tee(void *fdt, struct bd_info *bd);
 
 /* ABB */
 #define OMAP_ABB_NOMINAL_OPP		0
@@ -722,6 +737,7 @@ static inline u8 is_omap54xx(void)
 
 #define DRA7XX		0x07000000
 #define DRA72X		0x07200000
+#define DRA76X		0x07600000
 
 static inline u8 is_dra7xx(void)
 {
@@ -733,6 +749,24 @@ static inline u8 is_dra72x(void)
 {
 	extern u32 *const omap_si_rev;
 	return (*omap_si_rev & 0xFFF00000) == DRA72X;
+}
+
+static inline u8 is_dra76x(void)
+{
+	extern u32 *const omap_si_rev;
+	return (*omap_si_rev & 0xFFF00000) == DRA76X;
+}
+
+static inline u8 is_dra76x_abz(void)
+{
+	extern u32 *const omap_si_rev;
+	return (*omap_si_rev & 0xF) == 2;
+}
+
+static inline u8 is_dra76x_acd(void)
+{
+	extern u32 *const omap_si_rev;
+	return (*omap_si_rev & 0xF) == 3;
 }
 #endif
 
@@ -761,12 +795,16 @@ static inline u8 is_dra72x(void)
 #define OMAP5432_ES2_0  0x54320200
 
 /* DRA7XX */
+#define DRA762_ES1_0	0x07620100
 #define DRA752_ES1_0	0x07520100
 #define DRA752_ES1_1	0x07520110
 #define DRA752_ES2_0	0x07520200
 #define DRA722_ES1_0	0x07220100
 #define DRA722_ES2_0	0x07220200
+#define DRA722_ES2_1	0x07220210
 
+#define DRA762_ABZ_ES1_0	0x07620102
+#define DRA762_ACD_ES1_0	0x07620103
 /*
  * silicon device type
  * Moving to common from cpu.h, since it is shared by various omap devices
@@ -775,7 +813,6 @@ static inline u8 is_dra72x(void)
 #define EMU_DEVICE          0x1
 #define HS_DEVICE           0x2
 #define GP_DEVICE           0x3
-
 
 /*
  * SRAM scratch space entries

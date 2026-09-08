@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2016
  * Olliver Schinagl <oliver@schinagl.nl>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <ctype.h>
@@ -17,12 +16,12 @@
 #define ARP_HLEN_ASCII (ARP_HLEN * 2) + (ARP_HLEN - 1) /* with separators */
 #define ARP_HLEN_LAZY (ARP_HLEN * 2) /* separatorless hardware address length */
 
-uint8_t nibble_to_hex(const char *nibble, bool lo)
+static uint8_t nibble_to_hex(const char *nibble, bool lo)
 {
 	return (strtol(nibble, NULL, 16) << (lo ? 0 : 4)) & (lo ? 0x0f : 0xf0);
 }
 
-int process_mac(const char *mac_address)
+static int process_mac(const char *mac_address)
 {
 	uint8_t ethaddr[ARP_HLEN + 1] = { 0x00 };
 	uint_fast8_t i = 0;
@@ -46,7 +45,7 @@ int process_mac(const char *mac_address)
 	return 0;
 }
 
-void print_usage(char *cmdname)
+static void print_usage(char *cmdname)
 {
 	printf("Usage: %s <mac_address>\n", cmdname);
 	puts("<mac_address> may be with or without separators.");

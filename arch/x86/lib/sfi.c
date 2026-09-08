@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2015 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -13,7 +12,6 @@
  * See https://simplefirmware.org/ for details
  */
 
-#include <common.h>
 #include <cpu.h>
 #include <dm.h>
 #include <asm/cpu.h>
@@ -85,7 +83,7 @@ static int sfi_write_cpus(struct table_info *tab)
 	for (uclass_find_first_device(UCLASS_CPU, &dev);
 	     dev;
 	     uclass_find_next_device(&dev)) {
-		struct cpu_platdata *plat = dev_get_parent_platdata(dev);
+		struct cpu_plat *plat = dev_get_parent_plat(dev);
 
 		if (!device_active(dev))
 			continue;

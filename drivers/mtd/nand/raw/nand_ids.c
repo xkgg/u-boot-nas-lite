@@ -6,11 +6,10 @@
  * published by the Free Software Foundation.
  *
  */
-#include <common.h>
 #include <linux/mtd/rawnand.h>
 #include <linux/sizes.h>
 
-#define LP_OPTIONS NAND_SAMSUNG_LP_OPTIONS
+#define LP_OPTIONS 0
 #define LP_OPTIONS16 (LP_OPTIONS | NAND_BUSWIDTH_16)
 
 #define SP_OPTIONS NAND_NEED_READRDY
@@ -24,16 +23,6 @@
  * extended chip ID.
  */
 struct nand_flash_dev nand_flash_ids[] = {
-#ifdef CONFIG_MTD_NAND_MUSEUM_IDS
-	LEGACY_ID_NAND("NAND 1MiB 5V 8-bit",	0x6e, 1, SZ_4K, SP_OPTIONS),
-	LEGACY_ID_NAND("NAND 2MiB 5V 8-bit",	0x64, 2, SZ_4K, SP_OPTIONS),
-	LEGACY_ID_NAND("NAND 1MiB 3,3V 8-bit",	0xe8, 1, SZ_4K, SP_OPTIONS),
-	LEGACY_ID_NAND("NAND 1MiB 3,3V 8-bit",	0xec, 1, SZ_4K, SP_OPTIONS),
-	LEGACY_ID_NAND("NAND 2MiB 3,3V 8-bit",	0xea, 2, SZ_4K, SP_OPTIONS),
-	LEGACY_ID_NAND("NAND 4MiB 3,3V 8-bit", 	0xd5, 4, SZ_8K, SP_OPTIONS),
-
-	LEGACY_ID_NAND("NAND 8MiB 3,3V 8-bit",	0xe6, 8, SZ_8K, SP_OPTIONS),
-#endif
 	/*
 	 * Some incompatible NAND chips share device ID's and so must be
 	 * listed by full ID. We list them first so that we can easily identify
@@ -55,9 +44,6 @@ struct nand_flash_dev nand_flash_ids[] = {
 	{"TC58NVG5D2 32G 3.3V 8-bit",
 		{ .id = {0x98, 0xd7, 0x94, 0x32, 0x76, 0x56, 0x09, 0x00} },
 		  SZ_8K, SZ_4K, SZ_1M, 0, 8, 640, NAND_ECC_INFO(40, SZ_1K) },
-	{"TC58NVG5H2 32G 3.3V 24-bit",
-		{ .id = {0x98, 0xd7, 0xa0, 0x32, 0x76, 0x56, 0x08, 0x08} },
-		  SZ_8K, SZ_4K, SZ_1M, 0, 8, 1024, NAND_ECC_INFO(24, SZ_1K) },
 	{"TC58NVG6D2 64G 3.3V 8-bit",
 		{ .id = {0x98, 0xde, 0x94, 0x82, 0x76, 0x56, 0x04, 0x20} },
 		  SZ_8K, SZ_8K, SZ_2M, 0, 8, 640, NAND_ECC_INFO(40, SZ_1K) },
@@ -75,7 +61,7 @@ struct nand_flash_dev nand_flash_ids[] = {
 		{ .id = {0xad, 0xde, 0x94, 0xda, 0x74, 0xc4} },
 		  SZ_8K, SZ_8K, SZ_2M, NAND_NEED_SCRAMBLING, 6, 640,
 		  NAND_ECC_INFO(40, SZ_1K), 4 },
-	{"H27QCG8T2E5R‐BCF 64G 3.3V 8-bit",
+	{"H27QCG8T2E5R-BCF 64G 3.3V 8-bit",
 		{ .id = {0xad, 0xde, 0x14, 0xa7, 0x42, 0x4a} },
 		  SZ_16K, SZ_8K, SZ_4M, NAND_NEED_SCRAMBLING, 6, 1664,
 		  NAND_ECC_INFO(56, SZ_1K), 1 },
@@ -193,17 +179,17 @@ struct nand_flash_dev nand_flash_ids[] = {
 };
 
 /* Manufacturer IDs */
-struct nand_manufacturers nand_manuf_ids[] = {
-	{NAND_MFR_TOSHIBA, "Toshiba"},
-	{NAND_MFR_SAMSUNG, "Samsung"},
+struct nand_manufacturer nand_manuf_ids[] = {
+	{NAND_MFR_TOSHIBA, "Toshiba", &toshiba_nand_manuf_ops},
+	{NAND_MFR_SAMSUNG, "Samsung", &samsung_nand_manuf_ops},
 	{NAND_MFR_FUJITSU, "Fujitsu"},
 	{NAND_MFR_NATIONAL, "National"},
 	{NAND_MFR_RENESAS, "Renesas"},
 	{NAND_MFR_STMICRO, "ST Micro"},
-	{NAND_MFR_HYNIX, "Hynix"},
-	{NAND_MFR_MICRON, "Micron"},
-	{NAND_MFR_AMD, "AMD/Spansion"},
-	{NAND_MFR_MACRONIX, "Macronix"},
+	{NAND_MFR_HYNIX, "Hynix", &hynix_nand_manuf_ops},
+	{NAND_MFR_MICRON, "Micron", &micron_nand_manuf_ops},
+	{NAND_MFR_AMD, "AMD/Spansion", &amd_nand_manuf_ops},
+	{NAND_MFR_MACRONIX, "Macronix", &macronix_nand_manuf_ops},
 	{NAND_MFR_EON, "Eon"},
 	{NAND_MFR_SANDISK, "SanDisk"},
 	{NAND_MFR_INTEL, "Intel"},

@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /**
  * udc-core.c - Core UDC Framework
  *
- * Copyright (C) 2015 Texas Instruments Incorporated - http://www.ti.com
+ * Copyright (C) 2015 Texas Instruments Incorporated - https://www.ti.com
  *
  * Author: Felipe Balbi <balbi@ti.com>
  *
@@ -10,15 +11,14 @@
  *
  * commit 02e8c96627 : usb: gadget: udc: core: prepend udc_attach_driver with
  *		       usb_
- *
- * SPDX-License-Identifier:     GPL-2.0
  */
 
+#include <dm/device_compat.h>
+#include <dm/devres.h>
 #include <linux/compat.h>
 #include <malloc.h>
 #include <asm/cache.h>
-#include <asm/dma-mapping.h>
-#include <common.h>
+#include <linux/dma-mapping.h>
 #include <dm.h>
 #include <dm/device-internal.h>
 #include <linux/usb/ch9.h>
@@ -66,7 +66,7 @@ void usb_gadget_unmap_request(struct usb_gadget *gadget,
 	if (req->length == 0)
 		return;
 
-	dma_unmap_single((void *)(uintptr_t)req->dma, req->length,
+	dma_unmap_single(req->dma, req->length,
 			 is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 }
 EXPORT_SYMBOL_GPL(usb_gadget_unmap_request);
@@ -322,6 +322,7 @@ err1:
 int usb_gadget_probe_driver(struct usb_gadget_driver *driver)
 {
 	struct usb_udc		*udc = NULL;
+	unsigned int		udc_count = 0;
 	int			ret;
 
 	if (!driver || !driver->bind || !driver->setup)
@@ -329,12 +330,22 @@ int usb_gadget_probe_driver(struct usb_gadget_driver *driver)
 
 	mutex_lock(&udc_lock);
 	list_for_each_entry(udc, &udc_list, list) {
+		udc_count++;
+
 		/* For now we take the first one */
 		if (!udc->driver)
 			goto found;
 	}
 
-	printf("couldn't find an available UDC\n");
+	if (!udc_count)
+		printf("No UDC available in the system\n");
+	else
+		/* When this happens, users should 'unbind <class> <index>'
+		 * using the output of 'dm tree' and looking at the line right
+		 * after the USB peripheral/device controller.
+		 */
+		printf("All UDCs in use (%d available), use the unbind command\n",
+		       udc_count);
 	mutex_unlock(&udc_lock);
 	return -ENODEV;
 found:

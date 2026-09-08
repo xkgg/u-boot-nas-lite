@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2007 Semihalf
  *
  * Written by: Rafal Jaworowski <raj@semihalf.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * This file contains routines that fetch data from PowerPC-dependent sources
  * (bd_info etc.)
@@ -13,7 +12,6 @@
 #include <linux/types.h>
 #include <api_public.h>
 
-#include <asm/u-boot.h>
 #include <asm/global_data.h>
 
 #include "api_private.h"
@@ -43,9 +41,8 @@ int platform_sys_info(struct sys_info *si)
 	si->bar = 0;
 #endif
 
-	platform_set_mr(si, gd->bd->bi_memstart, gd->bd->bi_memsize, MR_ATTR_DRAM);
+	platform_set_mr(si, gd->ram_base, gd->ram_size, MR_ATTR_DRAM);
 	platform_set_mr(si, gd->bd->bi_flashstart, gd->bd->bi_flashsize, MR_ATTR_FLASH);
-	platform_set_mr(si, gd->bd->bi_sramstart, gd->bd->bi_sramsize, MR_ATTR_SRAM);
 
 	return 1;
 }

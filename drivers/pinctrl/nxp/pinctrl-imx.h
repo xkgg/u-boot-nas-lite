@@ -1,11 +1,18 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2016 Peng Fan <van.freenix@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __DRIVERS_PINCTRL_IMX_H
 #define __DRIVERS_PINCTRL_IMX_H
+
+#define PINCTRL_PIN(a, b)	{ .number = a, .name = b }
+#define IMX_PINCTRL_PIN(pin)	PINCTRL_PIN(pin, #pin)
+
+struct imx_pinctrl_pin_desc {
+	unsigned int number;
+	const char *name;
+};
 
 /**
  * @base: the address to the controller in virtual memory
@@ -29,8 +36,6 @@ struct imx_pinctrl_priv {
 	struct imx_pinctrl_soc_info *info;
 };
 
-extern const struct pinctrl_ops imx_pinctrl_ops;
-
 #define IMX_NO_PAD_CTL	0x80000000	/* no pin config need */
 #define IMX_PAD_SION	0x40000000	/* set SION */
 
@@ -41,13 +46,23 @@ extern const struct pinctrl_ops imx_pinctrl_ops;
 #define FSL_PIN_SIZE		24
 #define SHARE_FSL_PIN_SIZE	20
 
+/* Each pin on imx8qm/qxp consists of 2 u32 PIN_FUNC_ID and 1 u32 CONFIG */
+#define SHARE_IMX8_PIN_SIZE	12
+
 #define SHARE_MUX_CONF_REG	0x1
 #define ZERO_OFFSET_VALID	0x2
-#define CONFIG_IBE_OBE		0x4
+#define CFG_IBE_OBE		0x4
+#define IMX8_USE_SCU		0x8
 
 #define IOMUXC_CONFIG_SION	(0x1 << 4)
 
-int imx_pinctrl_probe(struct udevice *dev, struct imx_pinctrl_soc_info *info);
+int imx_pinctrl_probe_common(struct udevice *dev);
+int imx_pinctrl_probe_mmio(struct udevice *dev);
 
-int imx_pinctrl_remove(struct udevice *dev);
+int imx_pinctrl_remove_mmio(struct udevice *dev);
+
+int imx_pinctrl_set_state_common(struct udevice *dev, struct udevice *config,
+				 int pin_size, u32 **pin_data, int *npins);
+int imx_pinctrl_set_state_mmio(struct udevice *dev, struct udevice *config);
+
 #endif /* __DRIVERS_PINCTRL_IMX_H */

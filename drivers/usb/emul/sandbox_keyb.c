@@ -1,17 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
 #include <os.h>
 #include <scsi.h>
 #include <usb.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 /*
  * This driver emulates a USB keyboard using the USB HID specification (boot
@@ -41,7 +38,7 @@ enum {
  *
  */
 struct sandbox_keyb_priv {
-	struct membuff in;
+	struct membuf in;
 };
 
 struct sandbox_keyb_plat {
@@ -158,14 +155,20 @@ static void *keyb_desc_list[] = {
 	NULL,
 };
 
-int sandbox_usb_keyb_add_string(struct udevice *dev, const char *str)
+/**
+ * sandbox_usb_keyb_add_string() - provide a USB scancode buffer
+ *
+ * @dev:	the keyboard emulation device
+ * @scancode:	scancode buffer with USB_KBD_BOOT_REPORT_SIZE bytes
+ */
+int sandbox_usb_keyb_add_string(struct udevice *dev,
+				const char scancode[USB_KBD_BOOT_REPORT_SIZE])
 {
 	struct sandbox_keyb_priv *priv = dev_get_priv(dev);
-	int len, ret;
+	int ret;
 
-	len = strlen(str);
-	ret = membuff_put(&priv->in, str, len);
-	if (ret != len)
+	ret = membuf_put(&priv->in, scancode, USB_KBD_BOOT_REPORT_SIZE);
+	if (ret != USB_KBD_BOOT_REPORT_SIZE)
 		return -ENOSPC;
 
 	return 0;
@@ -186,19 +189,19 @@ static int sandbox_keyb_interrupt(struct udevice *dev, struct usb_device *udev,
 {
 	struct sandbox_keyb_priv *priv = dev_get_priv(dev);
 	uint8_t *data = buffer;
-	int ch;
 
 	memset(data, '\0', length);
-	ch = membuff_getbyte(&priv->in);
-	if (ch != -1)
-		data[2] = 4 + ch - 'a';
+	if (length < USB_KBD_BOOT_REPORT_SIZE)
+		return 0;
+
+	membuf_get(&priv->in, buffer, USB_KBD_BOOT_REPORT_SIZE);
 
 	return 0;
 }
 
 static int sandbox_keyb_bind(struct udevice *dev)
 {
-	struct sandbox_keyb_plat *plat = dev_get_platdata(dev);
+	struct sandbox_keyb_plat *plat = dev_get_plat(dev);
 	struct usb_string *fs;
 
 	fs = plat->keyb_strings;
@@ -216,7 +219,8 @@ static int sandbox_keyb_probe(struct udevice *dev)
 {
 	struct sandbox_keyb_priv *priv = dev_get_priv(dev);
 
-	return membuff_new(&priv->in, 256);
+	/* Provide an 80 character keyboard buffer */
+	return membuf_new(&priv->in, 80 * USB_KBD_BOOT_REPORT_SIZE);
 }
 
 static const struct dm_usb_ops sandbox_usb_keyb_ops = {
@@ -236,6 +240,6 @@ U_BOOT_DRIVER(usb_sandbox_keyb) = {
 	.bind	= sandbox_keyb_bind,
 	.probe	= sandbox_keyb_probe,
 	.ops	= &sandbox_usb_keyb_ops,
-	.priv_auto_alloc_size = sizeof(struct sandbox_keyb_priv),
-	.platdata_auto_alloc_size = sizeof(struct sandbox_keyb_plat),
+	.priv_auto	= sizeof(struct sandbox_keyb_priv),
+	.plat_auto	= sizeof(struct sandbox_keyb_plat),
 };

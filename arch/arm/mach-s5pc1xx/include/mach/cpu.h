@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2009 Samsung Electronics
  * Minkyu Kang <mk7.kang@samsung.com>
  * Heungjun Kim <riverful.kim@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _S5PC1XX_CPU_H
@@ -45,7 +44,6 @@
 #define S5PC110_OTG_BASE	0xEC000000
 #define S5PC110_PHY_BASE	0xEC100000
 #define S5PC110_USB_PHY_CONTROL 0xE010E80C
-
 
 #ifndef __ASSEMBLY__
 #include <asm/io.h>

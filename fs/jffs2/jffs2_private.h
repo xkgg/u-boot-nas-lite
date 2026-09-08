@@ -3,11 +3,15 @@
 
 #include <jffs2/jffs2.h>
 
-
 struct b_node {
 	u32 offset;
 	struct b_node *next;
 	enum { CRC_UNKNOWN = 0, CRC_OK, CRC_BAD } datacrc;
+	u32 version;
+	union {
+		u32 ino; /* for inodes */
+		u32 pino; /* for dirents */
+	};
 };
 
 struct b_list {

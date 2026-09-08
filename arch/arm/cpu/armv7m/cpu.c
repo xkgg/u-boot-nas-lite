@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2010,2011
  * Vladimir Khusainov, Emcraft Systems, vlad@emcraft.com
  *
  * (C) Copyright 2015
  * Kamil Lulko, <kamil.lulko@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <cpu_func.h>
+#include <irq_func.h>
 #include <asm/io.h>
 #include <asm/armv7m.h>
+#include <spl.h>
 
 /*
  * This is called right before passing control to
@@ -18,6 +19,9 @@
  */
 int cleanup_before_linux(void)
 {
+	if (!CONFIG_IS_ENABLED(LIB_BOOTM) && !CONFIG_IS_ENABLED(LIB_BOOTZ))
+		return 0;
+
 	/*
 	 * this function is called just before we call linux
 	 * it prepares the processor for linux
@@ -37,13 +41,17 @@ int cleanup_before_linux(void)
 	 * dcache flushing and disabling dcache */
 	invalidate_dcache_all();
 
+	icache_disable();
+	invalidate_icache_all();
+
 	return 0;
 }
 
 /*
- * Perform the low-level reset.
+ * Perform the low-level reset. ARMv7M only.
  */
-void reset_cpu(ulong addr)
+#if IS_ENABLED(CONFIG_CPU_V7M)
+void reset_cpu(void)
 {
 	/*
 	 * Perform reset but keep priority group unchanged.
@@ -51,4 +59,11 @@ void reset_cpu(ulong addr)
 	writel((V7M_AIRCR_VECTKEY << V7M_AIRCR_VECTKEY_SHIFT)
 		| (V7M_SCB->aircr & V7M_AIRCR_PRIGROUP_MSK)
 		| V7M_AIRCR_SYSRESET, &V7M_SCB->aircr);
+}
+#endif
+
+void spl_perform_arch_fixups(struct spl_image_info *spl_image)
+{
+	if (IS_ENABLED(CONFIG_XPL_BUILD))
+		spl_image->entry_point |= 0x1;
 }

@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2001
  * Gerald Van Baren, Custom IDEAS, vanbaren@cideas.com.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -10,10 +9,11 @@
  * channel.
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
 #include <miiphy.h>
 #include <phy.h>
+#include <linux/delay.h>
 
 #include <asm/types.h>
 #include <linux/list.h>
@@ -30,7 +30,7 @@
 #define debug(fmt, args...)
 #endif /* MII_DEBUG */
 
-static struct list_head mii_devs;
+static LIST_HEAD(mii_devs);
 static struct mii_dev *current_mii;
 
 /*
@@ -55,16 +55,6 @@ struct mii_dev *miiphy_get_dev_by_name(const char *devname)
 	return NULL;
 }
 
-/*****************************************************************************
- *
- * Initialize global data. Need to be called before any other miiphy routine.
- */
-void miiphy_init(void)
-{
-	INIT_LIST_HEAD(&mii_devs);
-	current_mii = NULL;
-}
-
 struct mii_dev *mdio_alloc(void)
 {
 	struct mii_dev *bus;
@@ -75,7 +65,7 @@ struct mii_dev *mdio_alloc(void)
 
 	memset(bus, 0, sizeof(*bus));
 
-	/* initalize mii_dev struct fields */
+	/* initialize mii_dev struct fields */
 	INIT_LIST_HEAD(&bus->link);
 
 	return bus;
@@ -176,6 +166,11 @@ int miiphy_set_current_dev(const char *devname)
 struct mii_dev *mdio_get_current_dev(void)
 {
 	return current_mii;
+}
+
+struct list_head *mdio_get_list_head(void)
+{
+	return &mii_devs;
 }
 
 struct phy_device *mdio_phydev_for_ethname(const char *ethname)
@@ -360,7 +355,7 @@ int miiphy_reset(const char *devname, unsigned char addr)
 		debug("PHY reset failed\n");
 		return -1;
 	}
-#ifdef CONFIG_PHY_RESET_DELAY
+#if CONFIG_PHY_RESET_DELAY > 0
 	udelay(CONFIG_PHY_RESET_DELAY);	/* Intel LXT971A needs this */
 #endif
 	/*
@@ -528,28 +523,3 @@ int miiphy_is_1000base_x(const char *devname, unsigned char addr)
 	return 0;
 #endif
 }
-
-#ifdef CONFIG_SYS_FAULT_ECHO_LINK_DOWN
-/*****************************************************************************
- *
- * Determine link status
- */
-int miiphy_link(const char *devname, unsigned char addr)
-{
-	unsigned short reg;
-
-	/* dummy read; needed to latch some phys */
-	(void)miiphy_read(devname, addr, MII_BMSR, &reg);
-	if (miiphy_read(devname, addr, MII_BMSR, &reg)) {
-		puts("MII_BMSR read failed, assuming no link\n");
-		return 0;
-	}
-
-	/* Determine if a link is active */
-	if ((reg & BMSR_LSTATUS) != 0) {
-		return 1;
-	} else {
-		return 0;
-	}
-}
-#endif

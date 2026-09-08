@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2016 Imagination Technologies
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
-#include <common.h>
+#include <init.h>
 
 #include <asm/io.h>
 #include <asm/mipsregs.h>
@@ -16,7 +15,7 @@ int checkboard(void)
 {
 	u32 changelist;
 
-	lowlevel_display("U-boot  ");
+	lowlevel_display("U-Boot  ");
 
 	printf("Board: MIPS Boston\n");
 

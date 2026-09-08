@@ -1,9 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Boundary Devices Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-#include <common.h>
 #include <linux/errno.h>
 #include <asm/io.h>
 #include <asm/mach-imx/boot_mode.h>
@@ -52,17 +50,29 @@ static int create_usage(char *dest)
 	if (dest)
 		memcpy(dest - 1, " [noreset]", 11);	/* include trailing 0 */
 	size += 10;
+
+	if (dest)
+		memcpy(dest - 1, "\nbmode - getprisec", 19);
+	size += 18;
+
 	return size;
 }
 
-static int do_boot_mode(cmd_tbl_t *cmdtp, int flag, int argc,
-		char * const argv[])
+__weak int boot_mode_getprisec(void)
+{
+	return 0;
+}
+
+static int do_boot_mode(struct cmd_tbl *cmdtp, int flag, int argc,
+			char *const argv[])
 {
 	const struct boot_mode *p;
 	int reset_requested = 1;
 
 	if (argc < 2)
 		return CMD_RET_USAGE;
+	if (!strcmp(argv[1], "getprisec"))
+		return boot_mode_getprisec();
 	p = search_modes(argv[1]);
 	if (!p)
 		return CMD_RET_USAGE;
@@ -72,7 +82,11 @@ static int do_boot_mode(cmd_tbl_t *cmdtp, int flag, int argc,
 		reset_requested = 0;
 	}
 
+/* No longer applicable to i.MX8M */
+#if IS_ENABLED(CONFIG_MX53) || IS_ENABLED(CONFIG_MX6) || IS_ENABLED(CONFIG_MX7)
 	boot_mode_apply(p->cfg_val);
+#endif
+
 	if (reset_requested && p->cfg_val)
 		do_reset(NULL, 0, 0, NULL);
 	return 0;
@@ -88,7 +102,7 @@ void add_board_boot_modes(const struct boot_mode *p)
 	int size;
 	char *dest;
 
-	cmd_tbl_t *entry = ll_entry_get(cmd_tbl_t, bmode, cmd);
+	struct cmd_tbl *entry = ll_entry_get(struct cmd_tbl, bmode, cmd);
 
 	if (entry->usage) {
 		free(entry->usage);

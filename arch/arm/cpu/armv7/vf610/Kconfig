@@ -23,13 +23,14 @@ config TARGET_BK4R1
 	bool "BK4r1"
 	select SYS_FSL_ERRATUM_ESDHC135
 	select SYS_FSL_ERRATUM_ESDHC_A001
+	select BOARD_LATE_INIT
 
 endchoice
 
 config SYS_SOC
 	default "vf610"
 
-source "board/freescale/vf610twr/Kconfig"
+source "board/nxp/vf610twr/Kconfig"
 source "board/phytec/pcm052/Kconfig"
 source "board/toradex/colibri_vf/Kconfig"
 

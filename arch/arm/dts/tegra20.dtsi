@@ -249,6 +249,35 @@
 		*/
 	};
 
+	/* Audio Bitstream Engine */
+	bsea@60011000 {
+		compatible = "nvidia,tegra20-bsea";
+		reg = <0x60011000 0x1000>, <0x4000c000 0x4000>;
+		reg-names = "bsea", "iram-buffer";
+		interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "bsea";
+		clocks = <&tegra_car TEGRA20_CLK_BSEA>;
+		resets = <&tegra_car 62>;
+		reset-names = "bsea";
+		status = "disabled";
+	};
+
+	/* Video Bitstream Engine */
+	bsev@6001b000 {
+		compatible = "nvidia,tegra20-bsev";
+		reg = <0x6001b000 0x1000>, <0x40008000 0x4000>;
+		reg-names = "bsev", "iram-buffer";
+		interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "bsev";
+		clocks = <&tegra_car TEGRA20_CLK_BSEV>,
+			 <&tegra_car TEGRA20_CLK_VDE>;
+		clock-names = "bsev", "vde";
+		resets = <&tegra_car 63>,
+			 <&tegra_car 61>;
+		reset-names = "bsev", "vde";
+		status = "disabled";
+	};
+
 	apbmisc@70000800 {
 		compatible = "nvidia,tegra20-apbmisc";
 		reg = <0x70000800 0x64   /* Chip revision */
@@ -580,7 +609,7 @@
 		reset-names = "fuse";
 	};
 
-	pcie-controller@80003000 {
+	pcie@80003000 {
 		compatible = "nvidia,tegra20-pcie";
 		device_type = "pci";
 		reg = <0x80003000 0x00000800   /* PADS registers */
@@ -737,7 +766,7 @@
 		status = "disabled";
 	};
 
-	sdhci@c8000000 {
+	mmc@c8000000 {
 		compatible = "nvidia,tegra20-sdhci";
 		reg = <0xc8000000 0x200>;
 		interrupts = <GIC_SPI 14 IRQ_TYPE_LEVEL_HIGH>;
@@ -747,7 +776,7 @@
 		status = "disabled";
 	};
 
-	sdhci@c8000200 {
+	mmc@c8000200 {
 		compatible = "nvidia,tegra20-sdhci";
 		reg = <0xc8000200 0x200>;
 		interrupts = <GIC_SPI 15 IRQ_TYPE_LEVEL_HIGH>;
@@ -757,7 +786,7 @@
 		status = "disabled";
 	};
 
-	sdhci@c8000400 {
+	mmc@c8000400 {
 		compatible = "nvidia,tegra20-sdhci";
 		reg = <0xc8000400 0x200>;
 		interrupts = <GIC_SPI 19 IRQ_TYPE_LEVEL_HIGH>;
@@ -767,7 +796,7 @@
 		status = "disabled";
 	};
 
-	sdhci@c8000600 {
+	mmc@c8000600 {
 		compatible = "nvidia,tegra20-sdhci";
 		reg = <0xc8000600 0x200>;
 		interrupts = <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>;

@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2010-2012, NVIDIA CORPORATION.  All rights reserved.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 /* Tegra30 high-level function multiplexing */
@@ -17,5 +16,6 @@ enum {
 
 	/* UART configs */
 	FUNCMUX_UART1_ULPI = 0,
+	FUNCMUX_UART5_SDMMC1 = 1,
 };
 #endif	/* _TEGRA30_FUNCMUX_H_ */

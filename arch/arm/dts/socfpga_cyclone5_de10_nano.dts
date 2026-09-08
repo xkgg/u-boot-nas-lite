@@ -1,12 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2017, Intel Corporation
  *
  * based on socfpga_cyclone5_de0_nano_soc.dts
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include "socfpga_cyclone5.dtsi"
+#include "socfpga-common-u-boot.dtsi"
 
 / {
 	model = "Terasic DE10-Nano";
@@ -14,6 +14,7 @@
 
 	chosen {
 		bootargs = "console=ttyS0,115200";
+		stdout-path = "serial0:115200n8";
 	};
 
 	aliases {
@@ -21,14 +22,10 @@
 		udc0 = &usb1;
 	};
 
-	memory {
+	memory@0 {
 		name = "memory";
 		device_type = "memory";
 		reg = <0x0 0x40000000>; /* 1GB */
-	};
-
-	soc {
-		u-boot,dm-pre-reloc;
 	};
 };
 
@@ -58,11 +55,32 @@
 	status = "okay";
 };
 
+&porta {
+	bank-name = "porta";
+};
+
+&portb {
+	bank-name = "portb";
+};
+
+&portc {
+	bank-name = "portc";
+};
+
 &mmc0 {
 	status = "okay";
-	u-boot,dm-pre-reloc;
+	bootph-all;
 };
 
 &usb1 {
 	status = "okay";
+};
+
+&uart0 {
+	clock-frequency = <100000000>;
+	bootph-all;
+};
+
+&watchdog0 {
+	status = "disabled";
 };

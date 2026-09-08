@@ -1,15 +1,8 @@
-#
-# SPDX-License-Identifier:	GPL-2.0+
-#
+# SPDX-License-Identifier: GPL-2.0+
 
 dtb-y += $(CONFIG_DEFAULT_DEVICE_TREE:"%"=%).dtb
 
-targets += $(dtb-y)
+include $(srctree)/scripts/Makefile.dts
 
-DTC_FLAGS += -R 4 -p 0x1000
-
-PHONY += dtbs
-dtbs: $(addprefix $(obj)/, $(dtb-y))
-	@:
-
-clean-files := *.dtb
+# Add any required device tree compiler flags here
+DTC_FLAGS += -R 4

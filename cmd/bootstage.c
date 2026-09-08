@@ -1,20 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2012, Google Inc. All rights reserved.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <bootstage.h>
+#include <command.h>
+#include <vsprintf.h>
+#include <linux/string.h>
 
-static int do_bootstage_report(cmd_tbl_t *cmdtp, int flag, int argc,
-			       char * const argv[])
+static int do_bootstage_report(struct cmd_tbl *cmdtp, int flag, int argc,
+			       char *const argv[])
 {
 	bootstage_report();
 
 	return 0;
 }
 
-static int get_base_size(int argc, char * const argv[], ulong *basep,
+#if IS_ENABLED(CONFIG_BOOTSTAGE_STASH)
+static int get_base_size(int argc, char *const argv[], ulong *basep,
 			 ulong *sizep)
 {
 	char *endp;
@@ -23,20 +26,20 @@ static int get_base_size(int argc, char * const argv[], ulong *basep,
 	*sizep = CONFIG_BOOTSTAGE_STASH_SIZE;
 	if (argc < 2)
 		return 0;
-	*basep = simple_strtoul(argv[1], &endp, 16);
+	*basep = hextoul(argv[1], &endp);
 	if (*argv[1] == 0 || *endp != 0)
 		return -1;
 	if (argc == 2)
 		return 0;
-	*sizep = simple_strtoul(argv[2], &endp, 16);
+	*sizep = hextoul(argv[2], &endp);
 	if (*argv[2] == 0 || *endp != 0)
 		return -1;
 
 	return 0;
 }
 
-static int do_bootstage_stash(cmd_tbl_t *cmdtp, int flag, int argc,
-			      char * const argv[])
+static int do_bootstage_stash(struct cmd_tbl *cmdtp, int flag, int argc,
+			      char *const argv[])
 {
 	ulong base, size;
 	int ret;
@@ -57,20 +60,23 @@ static int do_bootstage_stash(cmd_tbl_t *cmdtp, int flag, int argc,
 
 	return 0;
 }
+#endif
 
-static cmd_tbl_t cmd_bootstage_sub[] = {
+static struct cmd_tbl cmd_bootstage_sub[] = {
 	U_BOOT_CMD_MKENT(report, 2, 1, do_bootstage_report, "", ""),
+#if IS_ENABLED(CONFIG_BOOTSTAGE_STASH)
 	U_BOOT_CMD_MKENT(stash, 4, 0, do_bootstage_stash, "", ""),
 	U_BOOT_CMD_MKENT(unstash, 4, 0, do_bootstage_stash, "", ""),
+#endif
 };
 
 /*
  * Process a bootstage sub-command
  */
-static int do_boostage(cmd_tbl_t *cmdtp, int flag, int argc,
-		       char * const argv[])
+static int do_boostage(struct cmd_tbl *cmdtp, int flag, int argc,
+		       char *const argv[])
 {
-	cmd_tbl_t *c;
+	struct cmd_tbl *c;
 
 	/* Strip off leading 'bootstage' command argument */
 	argc--;
@@ -85,11 +91,12 @@ static int do_boostage(cmd_tbl_t *cmdtp, int flag, int argc,
 		return CMD_RET_USAGE;
 }
 
-
 U_BOOT_CMD(bootstage, 4, 1, do_boostage,
 	"Boot stage command",
 	" - check boot progress and timing\n"
 	"report                      - Print a report\n"
+#if IS_ENABLED(CONFIG_BOOTSTAGE_STASH)
 	"stash [<start> [<size>]]    - Stash data into memory\n"
-	"unstash [<start> [<size>]]  - Unstash data from memory"
+	"unstash [<start> [<size>]]  - Unstash data from memory\n"
+#endif
 );

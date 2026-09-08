@@ -1,53 +1,36 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2001
  * Denis Peter, MPL AG Switzerland
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#define LOG_CATEGORY	UCLASS_SCSI
+
+#include <blk.h>
+#include <bootdev.h>
+#include <bootstage.h>
 #include <dm.h>
-#include <inttypes.h>
+#include <env.h>
+#include <libata.h>
+#include <log.h>
+#include <memalign.h>
+#include <part.h>
 #include <pci.h>
 #include <scsi.h>
 #include <dm/device-internal.h>
 #include <dm/uclass-internal.h>
 
-#if !defined(CONFIG_DM_SCSI)
-# ifdef CONFIG_SCSI_DEV_LIST
-#  define SCSI_DEV_LIST CONFIG_SCSI_DEV_LIST
-# else
-#  ifdef CONFIG_SATA_ULI5288
-
-#   define SCSI_VEND_ID 0x10b9
-#   define SCSI_DEV_ID  0x5288
-
-#  elif !defined(CONFIG_SCSI_AHCI_PLAT)
-#   error no scsi device defined
-#  endif
-# define SCSI_DEV_LIST {SCSI_VEND_ID, SCSI_DEV_ID}
-# endif
-#endif
-
-#if defined(CONFIG_PCI) && !defined(CONFIG_SCSI_AHCI_PLAT) && \
-	!defined(CONFIG_DM_SCSI)
-const struct pci_device_id scsi_device_list[] = { SCSI_DEV_LIST };
-#endif
 static struct scsi_cmd tempccb;	/* temporary scsi command buffer */
 
-static unsigned char tempbuff[512]; /* temporary data buffer */
-
-#if !defined(CONFIG_DM_SCSI)
-static int scsi_max_devs; /* number of highest available scsi device */
-
-static int scsi_curr_dev; /* current device */
-
-static struct blk_desc scsi_dev_desc[CONFIG_SYS_SCSI_MAX_DEVICE];
-#endif
+DEFINE_CACHE_ALIGN_BUFFER(u8, tempbuff, 512);	/* temporary data buffer */
 
 /* almost the maximum amount of the scsi_ext command.. */
-#define SCSI_MAX_READ_BLK 0xFFFF
+#define SCSI_MAX_BLK 0xFFFF
 #define SCSI_LBA48_READ	0xFFFFFFF
+
+#define SCSI_UNMAP_PARAM_RESERVED 0
+#define SCSI_UNMAP_PARAM_LEN 22
+#define SCSI_UNMAP_PARAM_DATA_LEN 16
 
 static void scsi_print_error(struct scsi_cmd *pccb)
 {
@@ -56,10 +39,10 @@ static void scsi_print_error(struct scsi_cmd *pccb)
 
 #ifdef CONFIG_SYS_64BIT_LBA
 void scsi_setup_read16(struct scsi_cmd *pccb, lbaint_t start,
-		       unsigned long blocks)
+		       lbaint_t blocks)
 {
 	pccb->cmd[0] = SCSI_READ16;
-	pccb->cmd[1] = pccb->lun << 5;
+	pccb->cmd[1] = 0;
 	pccb->cmd[2] = (unsigned char)(start >> 56) & 0xff;
 	pccb->cmd[3] = (unsigned char)(start >> 48) & 0xff;
 	pccb->cmd[4] = (unsigned char)(start >> 40) & 0xff;
@@ -84,11 +67,26 @@ void scsi_setup_read16(struct scsi_cmd *pccb, lbaint_t start,
 }
 #endif
 
+static void scsi_setup_inquiry(struct scsi_cmd *pccb)
+{
+	pccb->cmd[0] = SCSI_INQUIRY;
+	pccb->cmd[1] = 0;
+	pccb->cmd[2] = 0;
+	pccb->cmd[3] = 0;
+	if (pccb->datalen > 255)
+		pccb->cmd[4] = 255;
+	else
+		pccb->cmd[4] = (unsigned char)pccb->datalen;
+	pccb->cmd[5] = 0;
+	pccb->cmdlen = 6;
+	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
+}
+
 static void scsi_setup_read_ext(struct scsi_cmd *pccb, lbaint_t start,
-				unsigned short blocks)
+				lbaint_t blocks)
 {
 	pccb->cmd[0] = SCSI_READ10;
-	pccb->cmd[1] = pccb->lun << 5;
+	pccb->cmd[1] = 0;
 	pccb->cmd[2] = (unsigned char)(start >> 24) & 0xff;
 	pccb->cmd[3] = (unsigned char)(start >> 16) & 0xff;
 	pccb->cmd[4] = (unsigned char)(start >> 8) & 0xff;
@@ -96,7 +94,7 @@ static void scsi_setup_read_ext(struct scsi_cmd *pccb, lbaint_t start,
 	pccb->cmd[6] = 0;
 	pccb->cmd[7] = (unsigned char)(blocks >> 8) & 0xff;
 	pccb->cmd[8] = (unsigned char)blocks & 0xff;
-	pccb->cmd[6] = 0;
+	pccb->cmd[9] = 0;
 	pccb->cmdlen = 10;
 	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
 	debug("scsi_setup_read_ext: cmd: %02X %02X startblk %02X%02X%02X%02X blccnt %02X%02X\n",
@@ -106,10 +104,10 @@ static void scsi_setup_read_ext(struct scsi_cmd *pccb, lbaint_t start,
 }
 
 static void scsi_setup_write_ext(struct scsi_cmd *pccb, lbaint_t start,
-				 unsigned short blocks)
+				 lbaint_t blocks)
 {
 	pccb->cmd[0] = SCSI_WRITE10;
-	pccb->cmd[1] = pccb->lun << 5;
+	pccb->cmd[1] = 0x08; /* Set FUA bit to bypass write cache */
 	pccb->cmd[2] = (unsigned char)(start >> 24) & 0xff;
 	pccb->cmd[3] = (unsigned char)(start >> 16) & 0xff;
 	pccb->cmd[4] = (unsigned char)(start >> 8) & 0xff;
@@ -127,38 +125,59 @@ static void scsi_setup_write_ext(struct scsi_cmd *pccb, lbaint_t start,
 	      pccb->cmd[7], pccb->cmd[8]);
 }
 
-static void scsi_setup_inquiry(struct scsi_cmd *pccb)
+static void scsi_setup_erase_ext(struct scsi_cmd *pccb, lbaint_t start,
+				 lbaint_t blocks)
 {
-	pccb->cmd[0] = SCSI_INQUIRY;
-	pccb->cmd[1] = pccb->lun << 5;
-	pccb->cmd[2] = 0;
-	pccb->cmd[3] = 0;
-	if (pccb->datalen > 255)
-		pccb->cmd[4] = 255;
-	else
-		pccb->cmd[4] = (unsigned char)pccb->datalen;
-	pccb->cmd[5] = 0;
-	pccb->cmdlen = 6;
-	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
+	u8 *param = tempbuff;
+	const u8 param_size = 24;
+
+	memset(param, 0, param_size);
+	param[0] = SCSI_UNMAP_PARAM_RESERVED;
+	param[1] = SCSI_UNMAP_PARAM_LEN;
+	param[2] = SCSI_UNMAP_PARAM_RESERVED;
+	param[3] = SCSI_UNMAP_PARAM_DATA_LEN;
+
+	param[8]  = 0x0;
+	param[9]  = 0x0;
+	param[10] = 0x0;
+	param[11] = 0x0;
+	param[12] = (start >> 24) & 0xff;
+	param[13] = (start >> 16) & 0xff;
+	param[14] = (start >> 8) & 0xff;
+	param[15] = (start) & 0xff;
+	param[16] = (blocks >> 24) & 0xff;
+	param[17] = (blocks >> 16) & 0xff;
+	param[18] = (blocks >> 8) & 0xff;
+	param[19] = (blocks) & 0xff;
+
+	memset(pccb->cmd, 0, sizeof(pccb->cmd));
+	pccb->cmd[0] = SCSI_UNMAP;
+	pccb->cmd[1] = 0;
+	pccb->cmd[6] = 0;
+	pccb->cmd[7] = 0;
+	pccb->cmd[8] = param_size;
+	pccb->cmd[9] = 0;
+	pccb->cmdlen = 10;
+
+	pccb->pdata = param;
+	pccb->datalen = param_size;
+	pccb->dma_dir = DMA_TO_DEVICE;
+
+	debug("%s: cmd: %02X %02X startblk %02X%02X%02X%02X blccnt %02X%02X\n",
+	      __func__,
+	      pccb->cmd[0], pccb->cmd[1],
+	      pccb->cmd[2], pccb->cmd[3], pccb->cmd[4], pccb->cmd[5],
+	      pccb->cmd[7], pccb->cmd[8]);
 }
 
-#ifdef CONFIG_BLK
 static ulong scsi_read(struct udevice *dev, lbaint_t blknr, lbaint_t blkcnt,
 		       void *buffer)
-#else
-static ulong scsi_read(struct blk_desc *block_dev, lbaint_t blknr,
-		       lbaint_t blkcnt, void *buffer)
-#endif
 {
-#ifdef CONFIG_BLK
-	struct blk_desc *block_dev = dev_get_uclass_platdata(dev);
+	struct blk_desc *block_dev = dev_get_uclass_plat(dev);
 	struct udevice *bdev = dev->parent;
-#else
-	struct udevice *bdev = NULL;
-#endif
-	lbaint_t start, blks;
+	struct scsi_plat *uc_plat = dev_get_uclass_plat(bdev);
+	lbaint_t start, blks, max_blks, blocks;
 	uintptr_t buf_addr;
-	unsigned short smallblks = 0;
 	struct scsi_cmd *pccb = (struct scsi_cmd *)&tempccb;
 
 	/* Setup device */
@@ -167,47 +186,49 @@ static ulong scsi_read(struct blk_desc *block_dev, lbaint_t blknr,
 	buf_addr = (unsigned long)buffer;
 	start = blknr;
 	blks = blkcnt;
+	if (uc_plat->max_bytes_per_req)
+		max_blks = uc_plat->max_bytes_per_req / block_dev->blksz;
+	else
+		max_blks = SCSI_MAX_BLK;
+
 	debug("\nscsi_read: dev %d startblk " LBAF
 	      ", blccnt " LBAF " buffer %lx\n",
 	      block_dev->devnum, start, blks, (unsigned long)buffer);
 	do {
 		pccb->pdata = (unsigned char *)buf_addr;
+		pccb->dma_dir = DMA_FROM_DEVICE;
 #ifdef CONFIG_SYS_64BIT_LBA
 		if (start > SCSI_LBA48_READ) {
-			unsigned long blocks;
-			blocks = min_t(lbaint_t, blks, SCSI_MAX_READ_BLK);
+			blocks = min_t(lbaint_t, blks, max_blks);
 			pccb->datalen = block_dev->blksz * blocks;
 			scsi_setup_read16(pccb, start, blocks);
 			start += blocks;
-			blks -= blocks;
 		} else
 #endif
-		if (blks > SCSI_MAX_READ_BLK) {
-			pccb->datalen = block_dev->blksz *
-				SCSI_MAX_READ_BLK;
-			smallblks = SCSI_MAX_READ_BLK;
-			scsi_setup_read_ext(pccb, start, smallblks);
-			start += SCSI_MAX_READ_BLK;
-			blks -= SCSI_MAX_READ_BLK;
+		if (blks > max_blks) {
+			pccb->datalen = block_dev->blksz * max_blks;
+			blocks = max_blks;
+			scsi_setup_read_ext(pccb, start, blocks);
+			start += max_blks;
 		} else {
 			pccb->datalen = block_dev->blksz * blks;
-			smallblks = (unsigned short)blks;
-			scsi_setup_read_ext(pccb, start, smallblks);
+			blocks = blks;
+			scsi_setup_read_ext(pccb, start, blocks);
 			start += blks;
-			blks = 0;
 		}
 		debug("scsi_read_ext: startblk " LBAF
-		      ", blccnt %x buffer %" PRIXPTR "\n",
-		      start, smallblks, buf_addr);
+		      ", blccnt " LBAF " buffer %lX\n",
+		      start, blocks, buf_addr);
 		if (scsi_exec(bdev, pccb)) {
 			scsi_print_error(pccb);
 			blkcnt -= blks;
 			break;
 		}
+		blks -= blocks;
 		buf_addr += pccb->datalen;
 	} while (blks != 0);
 	debug("scsi_read_ext: end startblk " LBAF
-	      ", blccnt %x buffer %" PRIXPTR "\n", start, smallblks, buf_addr);
+	      ", blccnt " LBAF " buffer %lX\n", start, blocks, buf_addr);
 	return blkcnt;
 }
 
@@ -215,26 +236,14 @@ static ulong scsi_read(struct blk_desc *block_dev, lbaint_t blknr,
  * scsi_write
  */
 
-/* Almost the maximum amount of the scsi_ext command.. */
-#define SCSI_MAX_WRITE_BLK 0xFFFF
-
-#ifdef CONFIG_BLK
 static ulong scsi_write(struct udevice *dev, lbaint_t blknr, lbaint_t blkcnt,
 			const void *buffer)
-#else
-static ulong scsi_write(struct blk_desc *block_dev, lbaint_t blknr,
-			lbaint_t blkcnt, const void *buffer)
-#endif
 {
-#ifdef CONFIG_BLK
-	struct blk_desc *block_dev = dev_get_uclass_platdata(dev);
+	struct blk_desc *block_dev = dev_get_uclass_plat(dev);
 	struct udevice *bdev = dev->parent;
-#else
-	struct udevice *bdev = NULL;
-#endif
-	lbaint_t start, blks;
+	struct scsi_plat *uc_plat = dev_get_uclass_plat(bdev);
+	lbaint_t start, blks, max_blks, blocks;
 	uintptr_t buf_addr;
-	unsigned short smallblks;
 	struct scsi_cmd *pccb = (struct scsi_cmd *)&tempccb;
 
 	/* Setup device */
@@ -243,95 +252,97 @@ static ulong scsi_write(struct blk_desc *block_dev, lbaint_t blknr,
 	buf_addr = (unsigned long)buffer;
 	start = blknr;
 	blks = blkcnt;
+	if (uc_plat->max_bytes_per_req)
+		max_blks = uc_plat->max_bytes_per_req / block_dev->blksz;
+	else
+		max_blks = SCSI_MAX_BLK;
+
 	debug("\n%s: dev %d startblk " LBAF ", blccnt " LBAF " buffer %lx\n",
 	      __func__, block_dev->devnum, start, blks, (unsigned long)buffer);
 	do {
 		pccb->pdata = (unsigned char *)buf_addr;
-		if (blks > SCSI_MAX_WRITE_BLK) {
-			pccb->datalen = (block_dev->blksz *
-					 SCSI_MAX_WRITE_BLK);
-			smallblks = SCSI_MAX_WRITE_BLK;
-			scsi_setup_write_ext(pccb, start, smallblks);
-			start += SCSI_MAX_WRITE_BLK;
-			blks -= SCSI_MAX_WRITE_BLK;
+		pccb->dma_dir = DMA_TO_DEVICE;
+		if (blks > max_blks) {
+			pccb->datalen = block_dev->blksz * max_blks;
+			blocks = max_blks;
+			scsi_setup_write_ext(pccb, start, blocks);
+			start += max_blks;
 		} else {
 			pccb->datalen = block_dev->blksz * blks;
-			smallblks = (unsigned short)blks;
-			scsi_setup_write_ext(pccb, start, smallblks);
+			blocks = blks;
+			scsi_setup_write_ext(pccb, start, blocks);
 			start += blks;
-			blks = 0;
 		}
-		debug("%s: startblk " LBAF ", blccnt %x buffer %" PRIXPTR "\n",
-		      __func__, start, smallblks, buf_addr);
+		debug("%s: startblk " LBAF ", blccnt " LBAF " buffer %lx\n",
+		      __func__, start, blocks, buf_addr);
 		if (scsi_exec(bdev, pccb)) {
 			scsi_print_error(pccb);
 			blkcnt -= blks;
 			break;
 		}
+		blks -= blocks;
 		buf_addr += pccb->datalen;
 	} while (blks != 0);
-	debug("%s: end startblk " LBAF ", blccnt %x buffer %" PRIXPTR "\n",
-	      __func__, start, smallblks, buf_addr);
+
+	debug("%s: end startblk " LBAF ", blccnt " LBAF " buffer %lX\n",
+	      __func__, start, blocks, buf_addr);
 	return blkcnt;
 }
 
-#if defined(CONFIG_PCI) && !defined(CONFIG_SCSI_AHCI_PLAT) && \
-	!defined(CONFIG_DM_SCSI)
-void scsi_init(void)
+/*******************************************************************************
+ * scsi_erase
+ */
+static ulong scsi_erase(struct udevice *dev, lbaint_t blknr, lbaint_t blkcnt)
 {
-	int busdevfunc = -1;
-	int i;
-	/*
-	 * Find a device from the list, this driver will support a single
-	 * controller.
-	 */
-	for (i = 0; i < ARRAY_SIZE(scsi_device_list); i++) {
-		/* get PCI Device ID */
-#ifdef CONFIG_DM_PCI
-		struct udevice *dev;
-		int ret;
+	struct blk_desc *block_dev = dev_get_uclass_plat(dev);
+	struct udevice *bdev = dev->parent;
+	struct scsi_plat *uc_plat = dev_get_uclass_plat(bdev);
+	lbaint_t start, blks, max_blks, blocks;
+	struct scsi_cmd *pccb = (struct scsi_cmd *)&tempccb;
 
-		ret = dm_pci_find_device(scsi_device_list[i].vendor,
-					 scsi_device_list[i].device, 0, &dev);
-		if (!ret) {
-			busdevfunc = dm_pci_get_bdf(dev);
+	/* Setup device */
+	pccb->target = block_dev->target;
+	pccb->lun = block_dev->lun;
+	start = blknr;
+	blks = blkcnt;
+	if (uc_plat->max_bytes_per_req)
+		max_blks = uc_plat->max_bytes_per_req / block_dev->blksz;
+	else
+		max_blks = SCSI_MAX_BLK;
+
+	debug("\n%s: dev %d startblk " LBAF ", blccnt " LBAF "\n",
+	      __func__, block_dev->devnum, start, blks);
+	do {
+		if (blks > max_blks) {
+			blocks = max_blks;
+			scsi_setup_erase_ext(pccb, start, max_blks);
+			start += max_blks;
+		} else {
+			blocks = blks;
+			scsi_setup_erase_ext(pccb, start, blks);
+			start += blks;
+		}
+		if (scsi_exec(bdev, pccb)) {
+			scsi_print_error(pccb);
+			blkcnt -= blks;
 			break;
 		}
-#else
-		busdevfunc = pci_find_device(scsi_device_list[i].vendor,
-					     scsi_device_list[i].device,
-					     0);
-#endif
-		if (busdevfunc != -1)
-			break;
-	}
-
-	if (busdevfunc == -1) {
-		printf("Error: SCSI Controller(s) ");
-		for (i = 0; i < ARRAY_SIZE(scsi_device_list); i++) {
-			printf("%04X:%04X ",
-			       scsi_device_list[i].vendor,
-			       scsi_device_list[i].device);
-		}
-		printf("not found\n");
-		return;
-	}
-#ifdef DEBUG
-	else {
-		printf("SCSI Controller (%04X,%04X) found (%d:%d:%d)\n",
-		       scsi_device_list[i].vendor,
-		       scsi_device_list[i].device,
-		       (busdevfunc >> 16) & 0xFF,
-		       (busdevfunc >> 11) & 0x1F,
-		       (busdevfunc >> 8) & 0x7);
-	}
-#endif
-	bootstage_start(BOOTSTAGE_ID_ACCUM_SCSI, "ahci");
-	scsi_low_level_init(busdevfunc);
-	scsi_scan(true);
-	bootstage_accum(BOOTSTAGE_ID_ACCUM_SCSI);
+		blks -= blocks;
+	} while (blks != 0);
+	return blkcnt;
 }
-#endif
+
+#if IS_ENABLED(CONFIG_BOUNCE_BUFFER)
+static int scsi_buffer_aligned(struct udevice *dev, struct bounce_buffer *state)
+{
+	struct scsi_ops *ops = scsi_get_ops(dev->parent);
+
+	if (ops->buffer_aligned)
+		return ops->buffer_aligned(dev->parent, state);
+
+	return 1;
+}
+#endif	/* CONFIG_BOUNCE_BUFFER */
 
 /* copy src to dest, skipping leading and trailing blanks
  * and null terminate the string
@@ -365,8 +376,9 @@ static int scsi_read_capacity(struct udevice *dev, struct scsi_cmd *pccb,
 
 	memset(pccb->cmd, '\0', sizeof(pccb->cmd));
 	pccb->cmd[0] = SCSI_RD_CAPAC10;
-	pccb->cmd[1] = pccb->lun << 5;
+	pccb->cmd[1] = 0;
 	pccb->cmdlen = 10;
+	pccb->dma_dir = DMA_FROM_DEVICE;
 	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
 
 	pccb->datalen = 8;
@@ -384,6 +396,7 @@ static int scsi_read_capacity(struct udevice *dev, struct scsi_cmd *pccb,
 			 ((unsigned long)pccb->pdata[5] << 16) |
 			 ((unsigned long)pccb->pdata[6] << 8)  |
 			 ((unsigned long)pccb->pdata[7]);
+		*capacity += 1;
 		return 0;
 	}
 
@@ -395,6 +408,7 @@ static int scsi_read_capacity(struct udevice *dev, struct scsi_cmd *pccb,
 	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
 
 	pccb->datalen = 16;
+	pccb->dma_dir = DMA_FROM_DEVICE;
 	if (scsi_exec(dev, pccb))
 		return 1;
 
@@ -406,6 +420,7 @@ static int scsi_read_capacity(struct udevice *dev, struct scsi_cmd *pccb,
 		    ((uint64_t)pccb->pdata[5] << 16) |
 		    ((uint64_t)pccb->pdata[6] << 8)  |
 		    ((uint64_t)pccb->pdata[7]);
+	*capacity += 1;
 
 	*blksz = ((uint64_t)pccb->pdata[8]  << 56) |
 		 ((uint64_t)pccb->pdata[9]  << 48) |
@@ -419,14 +434,13 @@ static int scsi_read_capacity(struct udevice *dev, struct scsi_cmd *pccb,
 	return 0;
 }
 
-
 /*
  * Some setup (fill-in) routines
  */
 static void scsi_setup_test_unit_ready(struct scsi_cmd *pccb)
 {
 	pccb->cmd[0] = SCSI_TST_U_RDY;
-	pccb->cmd[1] = pccb->lun << 5;
+	pccb->cmd[1] = 0;
 	pccb->cmd[2] = 0;
 	pccb->cmd[3] = 0;
 	pccb->cmd[4] = 0;
@@ -442,39 +456,16 @@ static void scsi_setup_test_unit_ready(struct scsi_cmd *pccb)
  */
 static void scsi_init_dev_desc_priv(struct blk_desc *dev_desc)
 {
+	memset(dev_desc, 0, sizeof(struct blk_desc));
 	dev_desc->target = 0xff;
 	dev_desc->lun = 0xff;
 	dev_desc->log2blksz =
 		LOG2_INVALID(typeof(dev_desc->log2blksz));
 	dev_desc->type = DEV_TYPE_UNKNOWN;
-	dev_desc->vendor[0] = 0;
-	dev_desc->product[0] = 0;
-	dev_desc->revision[0] = 0;
-	dev_desc->removable = false;
-#if !CONFIG_IS_ENABLED(BLK)
-	dev_desc->block_read = scsi_read;
-	dev_desc->block_write = scsi_write;
-#endif
+#if IS_ENABLED(CONFIG_BOUNCE_BUFFER)
+	dev_desc->bb = true;
+#endif	/* CONFIG_BOUNCE_BUFFER */
 }
-
-#if !defined(CONFIG_DM_SCSI)
-/**
- * scsi_init_dev_desc - initialize all SCSI specific blk_desc properties
- *
- * @dev_desc: Block device description pointer
- * @devnum: Device number
- */
-static void scsi_init_dev_desc(struct blk_desc *dev_desc, int devnum)
-{
-	dev_desc->lba = 0;
-	dev_desc->blksz = 0;
-	dev_desc->if_type = IF_TYPE_SCSI;
-	dev_desc->devnum = devnum;
-	dev_desc->part_type = PART_TYPE_UNKNOWN;
-
-	scsi_init_dev_desc_priv(dev_desc);
-}
-#endif
 
 /**
  * scsi_detect_dev - Detect scsi device
@@ -495,11 +486,13 @@ static int scsi_detect_dev(struct udevice *dev, int target, int lun,
 	lbaint_t capacity;
 	unsigned long blksz;
 	struct scsi_cmd *pccb = (struct scsi_cmd *)&tempccb;
+	int count, err;
 
 	pccb->target = target;
 	pccb->lun = lun;
-	pccb->pdata = (unsigned char *)&tempbuff;
-	pccb->datalen = 512;
+	pccb->pdata = tempbuff;
+	pccb->datalen = 36;
+	pccb->dma_dir = DMA_FROM_DEVICE;
 	scsi_setup_inquiry(pccb);
 	if (scsi_exec(dev, pccb)) {
 		if (pccb->contr_stat == SCSI_SEL_TIME_OUT) {
@@ -530,9 +523,15 @@ static int scsi_detect_dev(struct udevice *dev, int target, int lun,
 	dev_desc->target = pccb->target;
 	dev_desc->lun = pccb->lun;
 
-	pccb->datalen = 0;
-	scsi_setup_test_unit_ready(pccb);
-	if (scsi_exec(dev, pccb)) {
+	for (count = 0; count < 3; count++) {
+		pccb->datalen = 0;
+		pccb->dma_dir = DMA_NONE;
+		scsi_setup_test_unit_ready(pccb);
+		err = scsi_exec(dev, pccb);
+		if (!err)
+			break;
+	}
+	if (err) {
 		if (dev_desc->removable) {
 			dev_desc->type = perq;
 			goto removable;
@@ -556,7 +555,6 @@ removable:
  * (re)-scan the scsi bus and reports scsi device info
  * to the user if mode = 1
  */
-#if defined(CONFIG_DM_SCSI)
 static int do_scsi_scan_one(struct udevice *dev, int id, int lun, bool verbose)
 {
 	int ret;
@@ -579,25 +577,40 @@ static int do_scsi_scan_one(struct udevice *dev, int id, int lun, bool verbose)
 	* block devices created
 	*/
 	snprintf(str, sizeof(str), "id%dlun%d", id, lun);
-	ret = blk_create_devicef(dev, "scsi_blk", str, IF_TYPE_SCSI, -1,
-			bd.blksz, bd.blksz * bd.lba, &bdev);
+	ret = blk_create_devicef(dev, "scsi_blk", str, UCLASS_SCSI, -1,
+				 bd.blksz, bd.lba, &bdev);
 	if (ret) {
 		debug("Can't create device\n");
 		return ret;
 	}
+	device_set_name_alloced(bdev);
 
-	bdesc = dev_get_uclass_platdata(bdev);
+	bdesc = dev_get_uclass_plat(bdev);
 	bdesc->target = id;
 	bdesc->lun = lun;
 	bdesc->removable = bd.removable;
 	bdesc->type = bd.type;
+	bdesc->bb = bd.bb;
 	memcpy(&bdesc->vendor, &bd.vendor, sizeof(bd.vendor));
 	memcpy(&bdesc->product, &bd.product, sizeof(bd.product));
 	memcpy(&bdesc->revision, &bd.revision,	sizeof(bd.revision));
-	part_init(bdesc);
+	if (IS_ENABLED(CONFIG_SYS_BIG_ENDIAN)) {
+		ata_swap_buf_le16((u16 *)&bdesc->vendor, sizeof(bd.vendor) / 2);
+		ata_swap_buf_le16((u16 *)&bdesc->product, sizeof(bd.product) / 2);
+		ata_swap_buf_le16((u16 *)&bdesc->revision, sizeof(bd.revision) / 2);
+	}
+
+	ret = blk_probe_or_unbind(bdev);
+	if (ret < 0)
+		/* TODO: undo create */
+		return log_msg_ret("pro", ret);
+
+	ret = bootdev_setup_for_sibling_blk(bdev, "scsi_bootdev");
+	if (ret)
+		return log_msg_ret("bd", ret);
 
 	if (verbose) {
-		printf("  Device %d: ", 0);
+		printf("  Device %d: ", bdesc->devnum);
 		dev_print(bdesc);
 	}
 	return 0;
@@ -605,7 +618,7 @@ static int do_scsi_scan_one(struct udevice *dev, int id, int lun, bool verbose)
 
 int scsi_scan_dev(struct udevice *dev, bool verbose)
 {
-	struct scsi_platdata *uc_plat; /* scsi controller platdata */
+	struct scsi_plat *uc_plat; /* scsi controller plat */
 	int ret;
 	int i;
 	int lun;
@@ -615,8 +628,8 @@ int scsi_scan_dev(struct udevice *dev, bool verbose)
 	if (ret)
 		return ret;
 
-	/* Get controller platdata */
-	uc_plat = dev_get_uclass_platdata(dev);
+	/* Get controller plat */
+	uc_plat = dev_get_uclass_plat(dev);
 
 	for (i = 0; i < uc_plat->max_id; i++)
 		for (lun = 0; lun < uc_plat->max_lun; lun++)
@@ -634,11 +647,22 @@ int scsi_scan(bool verbose)
 	if (verbose)
 		printf("scanning bus for devices...\n");
 
-	blk_unbind_all(IF_TYPE_SCSI);
-
 	ret = uclass_get(UCLASS_SCSI, &uc);
 	if (ret)
 		return ret;
+
+	/* remove all children of the SCSI devices */
+	uclass_foreach_dev(dev, uc) {
+		log_debug("unbind %s\n", dev->name);
+		ret = device_chld_remove(dev, NULL, DM_REMOVE_NORMAL);
+		if (!ret)
+			ret = device_chld_unbind(dev, NULL);
+		if (ret) {
+			if (verbose)
+				printf("unable to unbind devices (%dE)\n", ret);
+			return log_msg_ret("unb", ret);
+		}
+	}
 
 	uclass_foreach_dev(dev, uc) {
 		ret = scsi_scan_dev(dev, verbose);
@@ -648,50 +672,14 @@ int scsi_scan(bool verbose)
 
 	return 0;
 }
-#else
-int scsi_scan(bool verbose)
-{
-	unsigned char i, lun;
-	int ret;
 
-	if (verbose)
-		printf("scanning bus for devices...\n");
-	for (i = 0; i < CONFIG_SYS_SCSI_MAX_DEVICE; i++)
-		scsi_init_dev_desc(&scsi_dev_desc[i], i);
-
-	scsi_max_devs = 0;
-	for (i = 0; i < CONFIG_SYS_SCSI_MAX_SCSI_ID; i++) {
-		for (lun = 0; lun < CONFIG_SYS_SCSI_MAX_LUN; lun++) {
-			ret = scsi_detect_dev(NULL, i, lun,
-					      &scsi_dev_desc[scsi_max_devs]);
-			if (ret)
-				continue;
-			part_init(&scsi_dev_desc[scsi_max_devs]);
-
-			if (verbose) {
-				printf("  Device %d: ", 0);
-				dev_print(&scsi_dev_desc[scsi_max_devs]);
-			}
-			scsi_max_devs++;
-		} /* next LUN */
-	}
-	if (scsi_max_devs > 0)
-		scsi_curr_dev = 0;
-	else
-		scsi_curr_dev = -1;
-
-	printf("Found %d device(s).\n", scsi_max_devs);
-#ifndef CONFIG_SPL_BUILD
-	env_set_ulong("scsidevs", scsi_max_devs);
-#endif
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_BLK
 static const struct blk_ops scsi_blk_ops = {
 	.read	= scsi_read,
 	.write	= scsi_write,
+	.erase  = scsi_erase,
+#if IS_ENABLED(CONFIG_BOUNCE_BUFFER)
+	.buffer_aligned	= scsi_buffer_aligned,
+#endif	/* CONFIG_BOUNCE_BUFFER */
 };
 
 U_BOOT_DRIVER(scsi_blk) = {
@@ -699,11 +687,3 @@ U_BOOT_DRIVER(scsi_blk) = {
 	.id		= UCLASS_BLK,
 	.ops		= &scsi_blk_ops,
 };
-#else
-U_BOOT_LEGACY_BLK(scsi) = {
-	.if_typename	= "scsi",
-	.if_type	= IF_TYPE_SCSI,
-	.max_devs	= CONFIG_SYS_SCSI_MAX_DEVICE,
-	.desc		= scsi_dev_desc,
-};
-#endif

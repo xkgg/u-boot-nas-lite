@@ -1,27 +1,40 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2011
  * Corscience GmbH & Co. KG - Simon Schwarz <schwarz@corscience.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
-#include <common.h>
 #include <config.h>
+#include <fdt_support.h>
+#include <image.h>
+#include <imx_container.h>
+#include <log.h>
 #include <spl.h>
-#include <spl_rkfw.h>
+#include <spl_load.h>
 #include <asm/io.h>
+#include <mapmem.h>
 #include <nand.h>
 #include <linux/libfdt_env.h>
 #include <fdt.h>
 
+uint32_t __weak spl_nand_get_uboot_raw_page(void)
+{
+	return CONFIG_SYS_NAND_U_BOOT_OFFS;
+}
+
 #if defined(CONFIG_SPL_NAND_RAW_ONLY)
-int spl_nand_load_image(struct spl_image_info *spl_image,
+static int spl_nand_load_image(struct spl_image_info *spl_image,
 			struct spl_boot_device *bootdev)
 {
 	nand_init();
 
-	nand_spl_load_image(CONFIG_SYS_NAND_U_BOOT_OFFS,
-			    CONFIG_SYS_NAND_U_BOOT_SIZE,
-			    (void *)CONFIG_SYS_NAND_U_BOOT_DST);
+	printf("Loading U-Boot from 0x%08x (size 0x%08x) to 0x%08x\n",
+	       CONFIG_SYS_NAND_U_BOOT_OFFS, CFG_SYS_NAND_U_BOOT_SIZE,
+	       CFG_SYS_NAND_U_BOOT_DST);
+
+	nand_spl_load_image(spl_nand_get_uboot_raw_page(),
+			    CFG_SYS_NAND_U_BOOT_SIZE,
+			    map_sysmem(CFG_SYS_NAND_U_BOOT_DST,
+				       CFG_SYS_NAND_U_BOOT_SIZE));
 	spl_set_header_raw_uboot(spl_image);
 	nand_deselect();
 
@@ -29,88 +42,92 @@ int spl_nand_load_image(struct spl_image_info *spl_image,
 }
 #else
 
-static ulong spl_nand_fit_read(struct spl_load_info *load, ulong offs,
-			       ulong size, void *dst)
+__weak u32 nand_spl_adjust_offset(u32 sector, u32 offs)
 {
-	int ret;
-
-	ret = nand_spl_load_image(offs, size, dst);
-	if (!ret)
-		return size;
-	else
-		return 0;
+	return offs;
 }
 
-#ifdef CONFIG_SPL_LOAD_RKFW
-static ulong spl_nand_rkfw_read(struct spl_load_info *load, ulong offs,
-				ulong size, void *dst)
-{
-	int ret;
-
-	ret = nand_spl_load_image(offs * 512, size * 512, dst);
-	if (!ret)
-		return size;
-	else
-		return 0;
-}
-#endif
-
-static int spl_nand_load_element(struct spl_image_info *spl_image,
-				 int offset, struct image_header *header)
+static ulong spl_nand_read(struct spl_load_info *load, ulong offs, ulong size,
+			   void *dst)
 {
 	int err;
+	ulong sector;
 
-#ifdef CONFIG_SPL_LOAD_RKFW
+	debug("%s: offs %lx, size %lx, dst %p\n",
+	      __func__, offs, size, dst);
+
+	sector = *(int *)load->priv;
+	offs = sector + nand_spl_adjust_offset(sector, offs - sector);
+	err = nand_spl_load_image(offs, size, dst);
+	spl_set_bl_len(load, nand_page_size());
+	if (err)
+		return 0;
+
+	return size;
+}
+
+static int spl_nand_load_element(struct spl_image_info *spl_image,
+				 struct spl_boot_device *bootdev, int offset)
+{
 	struct spl_load_info load;
-	int ret;
 
-	load.dev = NULL;
-	load.priv = NULL;
-	load.filename = NULL;
-	load.bl_len = 1;
-	load.read = spl_nand_rkfw_read;
+	spl_load_init(&load, spl_nand_read, &offset, 1);
+	return spl_load(spl_image, bootdev, &load, 0, offset);
+}
 
-	ret = spl_load_rkfw_image(spl_image, &load);
-	if (!ret || ret != -EAGAIN)
-		return ret;
-#endif
-	err = nand_spl_load_image(offset, sizeof(*header), (void *)header);
+#if IS_ENABLED(CONFIG_SPL_OS_BOOT)
+static int spl_nand_load_image_os(struct spl_image_info *spl_image,
+				  struct spl_boot_device *bootdev)
+{
+	int err;
+	struct legacy_img_hdr *header = spl_get_load_buffer(0, sizeof(*header));
+
+	/* load linux */
+	nand_spl_load_image(CONFIG_SYS_NAND_SPL_KERNEL_OFFS, sizeof(*header),
+			    (void *)header);
+	err = spl_parse_image_header(spl_image, bootdev, header);
 	if (err)
 		return err;
 
-#ifdef CONFIG_SPL_FIT_IMAGE_MULTIPLE
-	if ((IS_ENABLED(CONFIG_SPL_LOAD_FIT) &&
-	     image_get_magic(header) == FDT_MAGIC) ||
-	     CONFIG_SPL_FIT_IMAGE_MULTIPLE > 1) {
-#else
-	if (IS_ENABLED(CONFIG_SPL_LOAD_FIT) &&
-	    image_get_magic(header) == FDT_MAGIC) {
-#endif
-		struct spl_load_info load;
+	if (header->ih_os != IH_OS_LINUX)
+		return -EINVAL;
 
-		debug("Found FIT\n");
-		load.dev = NULL;
-		load.priv = NULL;
-		load.filename = NULL;
-		load.bl_len = 1;
-		load.read = spl_nand_fit_read;
-		return spl_load_simple_fit(spl_image, &load, offset, header);
-	} else {
-		err = spl_parse_image_header(spl_image, header);
-		if (err)
-			return err;
-		return nand_spl_load_image(offset, spl_image->size,
-					   (void *)(ulong)spl_image->load_addr);
+	/* happy - was a linux */
+	err = nand_spl_load_image(CONFIG_SYS_NAND_SPL_KERNEL_OFFS,
+				  spl_image->size,
+				  (void *)spl_image->load_addr);
+	nand_deselect();
+
+	if (err)
+		return err;
+
+#if IS_ENABLED(CONFIG_SPL_OS_BOOT_ARGS)
+	/*
+	 * load parameter image load to temp position since nand_spl_load_image
+	 * reads a whole block which is typically larger than
+	 * CONFIG_CMD_SPL_WRITE_SIZE therefore may overwrite following sections
+	 * like BSS
+	 */
+	int *src, *dst;
+	nand_spl_load_image(CONFIG_CMD_SPL_NAND_OFS, CONFIG_CMD_SPL_WRITE_SIZE,
+			    (void *)CONFIG_TEXT_BASE);
+	/* copy to destination */
+	for (dst = (int *)CONFIG_SPL_PAYLOAD_ARGS_ADDR,
+	    src = (int *)CONFIG_TEXT_BASE;
+	     src < (int *)(CONFIG_TEXT_BASE + CONFIG_CMD_SPL_WRITE_SIZE);
+	     src++, dst++) {
+		writel(readl(src), dst);
 	}
+#endif
+
+	return 0;
 }
+#endif
 
 static int spl_nand_load_image(struct spl_image_info *spl_image,
 			       struct spl_boot_device *bootdev)
 {
 	int err;
-	struct image_header *header;
-	int *src __attribute__((unused));
-	int *dst __attribute__((unused));
 
 #ifdef CONFIG_SPL_NAND_SOFTECC
 	debug("spl: nand - using sw ecc\n");
@@ -119,66 +136,31 @@ static int spl_nand_load_image(struct spl_image_info *spl_image,
 #endif
 	nand_init();
 
-	/*use CONFIG_SYS_TEXT_BASE as temporary storage area */
-	header = (struct image_header *)(CONFIG_SYS_TEXT_BASE);
-#ifdef CONFIG_SPL_OS_BOOT
+#if CONFIG_IS_ENABLED(OS_BOOT)
 	if (!spl_start_uboot()) {
-		/*
-		 * load parameter image
-		 * load to temp position since nand_spl_load_image reads
-		 * a whole block which is typically larger than
-		 * CONFIG_CMD_SPL_WRITE_SIZE therefore may overwrite
-		 * following sections like BSS
-		 */
-		nand_spl_load_image(CONFIG_CMD_SPL_NAND_OFS,
-			CONFIG_CMD_SPL_WRITE_SIZE,
-			(void *)CONFIG_SYS_TEXT_BASE);
-		/* copy to destintion */
-		for (dst = (int *)CONFIG_SYS_SPL_ARGS_ADDR,
-				src = (int *)CONFIG_SYS_TEXT_BASE;
-				src < (int *)(CONFIG_SYS_TEXT_BASE +
-				CONFIG_CMD_SPL_WRITE_SIZE);
-				src++, dst++) {
-			writel(readl(src), dst);
-		}
-
-		/* load linux */
-		nand_spl_load_image(CONFIG_SYS_NAND_SPL_KERNEL_OFFS,
-			sizeof(*header), (void *)header);
-		err = spl_parse_image_header(spl_image, header);
-		if (err)
+		err = spl_nand_load_image_os(spl_image, bootdev);
+		if (!err)
+			return 0;
+		printf("%s: Failed in falcon boot: %d", __func__, err);
+		if (IS_ENABLED(CONFIG_SPL_OS_BOOT_SECURE))
 			return err;
-		if (header->ih_os == IH_OS_LINUX) {
-			/* happy - was a linux */
-			err = nand_spl_load_image(
-				CONFIG_SYS_NAND_SPL_KERNEL_OFFS,
-				spl_image->size,
-				(void *)spl_image->load_addr);
-			nand_deselect();
-			return err;
-		} else {
-			puts("The Expected Linux image was not "
-				"found. Please check your NAND "
-				"configuration.\n");
-			puts("Trying to start u-boot now...\n");
-		}
+		printf("Fallback to U-Boot\n");
 	}
 #endif
+
 #ifdef CONFIG_NAND_ENV_DST
-	spl_nand_load_element(spl_image, CONFIG_ENV_OFFSET, header);
+	spl_nand_load_element(spl_image, bootdev, CONFIG_ENV_OFFSET);
 #ifdef CONFIG_ENV_OFFSET_REDUND
-	spl_nand_load_element(spl_image, CONFIG_ENV_OFFSET_REDUND, header);
+	spl_nand_load_element(spl_image, bootdev, CONFIG_ENV_OFFSET_REDUND);
 #endif
 #endif
 	/* Load u-boot */
-	err = spl_nand_load_element(spl_image, CONFIG_SYS_NAND_U_BOOT_OFFS,
-				    header);
+	err = spl_nand_load_element(spl_image, bootdev, spl_nand_get_uboot_raw_page());
 #ifdef CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
 #if CONFIG_SYS_NAND_U_BOOT_OFFS != CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND
 	if (err)
-		err = spl_nand_load_element(spl_image,
-					    CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND,
-					    header);
+		err = spl_nand_load_element(spl_image, bootdev,
+					    CONFIG_SYS_NAND_U_BOOT_OFFS_REDUND);
 #endif
 #endif
 	nand_deselect();

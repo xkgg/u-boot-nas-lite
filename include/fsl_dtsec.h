@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2009-2011 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __DTSEC_H__
@@ -97,7 +96,6 @@ struct dtsec {
 	u32	cam2;		/* carry register 2 mask */
 	u32	res9[80];
 };
-
 
 /* TBI register addresses */
 #define TBI_CR			0x00

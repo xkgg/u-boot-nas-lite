@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _ASM_ARCH_SCG_H
 #define _ASM_ARCH_SCG_H
-
-#include <common.h>
 
 #ifdef CONFIG_CLK_DEBUG
 #define clk_debug(fmt, args...)	printf(fmt, ##args)
@@ -147,7 +144,6 @@
 #define SCG_APLL_CSR_APLLVLD_MASK       (0x01000000)
 
 #define SCG_UPLL_CSR_UPLLVLD_MASK       (0x01000000)
-
 
 #define SCG_PLL_PFD3_GATE_MASK          (0x80000000)
 #define SCG_PLL_PFD2_GATE_MASK          (0x00800000)
@@ -332,11 +328,11 @@ u32 decode_pll(enum pll_clocks pll);
 void scg_a7_rccr_init(void);
 void scg_a7_spll_init(void);
 void scg_a7_ddrclk_init(void);
-void scg_a7_apll_init(void);
 void scg_a7_firc_init(void);
 void scg_a7_nicclk_init(void);
 void scg_a7_sys_clk_sel(enum scg_sys_src clk);
 void scg_a7_info(void);
 void scg_a7_soscdiv_init(void);
+void scg_a7_init_core_clk(void);
 
 #endif

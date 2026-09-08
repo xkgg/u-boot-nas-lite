@@ -1,13 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2004-2008 Texas Instruments, <www.ti.com>
  * Rohit Choraria <rohitkc@ti.com>
  *
  * (C) Copyright 2013 Andreas Bießmann <andreas@biessmann.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef __ASM_OMAP_GPMC_H
 #define __ASM_OMAP_GPMC_H
+
+#include <linux/types.h>
+
+/* Maximum Number of Chip Selects */
+#define GPMC_CS_NUM	8
 
 #define GPMC_BUF_EMPTY	0
 #define GPMC_BUF_FULL	1

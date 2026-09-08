@@ -1,11 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2017 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:     GPL-2.0+
  */
 
-#include <common.h>
 #include <command.h>
 #include <dm.h>
 #include <led.h>
@@ -17,9 +15,7 @@ static const char *const state_label[] = {
 	[LEDST_OFF]	= "off",
 	[LEDST_ON]	= "on",
 	[LEDST_TOGGLE]	= "toggle",
-#ifdef CONFIG_LED_BLINK
 	[LEDST_BLINK]	= "blink",
-#endif
 };
 
 enum led_state_t get_led_cmd(char *var)
@@ -55,7 +51,7 @@ static int list_leds(void)
 	for (uclass_find_first_device(UCLASS_LED, &dev);
 	     dev;
 	     uclass_find_next_device(&dev)) {
-		struct led_uc_plat *plat = dev_get_uclass_platdata(dev);
+		struct led_uc_plat *plat = dev_get_uclass_plat(dev);
 
 		if (!plat->label)
 			continue;
@@ -72,31 +68,27 @@ static int list_leds(void)
 	return 0;
 }
 
-int do_led(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_led(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	enum led_state_t cmd;
 	const char *led_label;
 	struct udevice *dev;
-#ifdef CONFIG_LED_BLINK
 	int freq_ms = 0;
-#endif
 	int ret;
 
 	/* Validate arguments */
 	if (argc < 2)
 		return CMD_RET_USAGE;
 	led_label = argv[1];
-	if (*led_label == 'l')
+	if (strncmp(led_label, "list", 4) == 0)
 		return list_leds();
 
 	cmd = argc > 2 ? get_led_cmd(argv[2]) : LEDST_COUNT;
-#ifdef CONFIG_LED_BLINK
 	if (cmd == LEDST_BLINK) {
 		if (argc < 4)
 			return CMD_RET_USAGE;
-		freq_ms = simple_strtoul(argv[3], NULL, 10);
+		freq_ms = dectoul(argv[3], NULL);
 	}
-#endif
 	ret = led_get_by_label(led_label, &dev);
 	if (ret) {
 		printf("LED '%s' not found (err=%d)\n", led_label, ret);
@@ -108,13 +100,11 @@ int do_led(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	case LEDST_TOGGLE:
 		ret = led_set_state(dev, cmd);
 		break;
-#ifdef CONFIG_LED_BLINK
 	case LEDST_BLINK:
 		ret = led_set_period(dev, freq_ms);
 		if (!ret)
 			ret = led_set_state(dev, LEDST_BLINK);
 		break;
-#endif
 	case LEDST_COUNT:
 		printf("LED '%s': ", led_label);
 		ret = show_led_state(dev);
@@ -128,16 +118,13 @@ int do_led(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	return 0;
 }
 
-#ifdef CONFIG_LED_BLINK
-#define BLINK "|blink [blink-freq in ms]"
-#else
-#define BLINK ""
-#endif
-
 U_BOOT_CMD(
 	led, 4, 1, do_led,
 	"manage LEDs",
-	"<led_label> on|off|toggle" BLINK "\tChange LED state\n"
-	"led [<led_label>\tGet LED state\n"
+	"<led_label> on|off|toggle\tChange LED state\n"
+#if defined(CONFIG_LED_BLINK) || defined(CONFIG_LED_SW_BLINK)
+	"led <led_label> blink <blink-freq in ms>\tBlink LED (duty cycle 50%)\n"
+#endif
+	"led <led_label>\tGet LED state\n"
 	"led list\t\tshow a list of LEDs"
 );

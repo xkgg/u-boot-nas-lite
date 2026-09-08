@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * NVIDIA Tegra20 GPIO handling.
  *  (C) Copyright 2010-2012,2015
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -11,8 +10,8 @@
  * Tom Warren (twarren@nvidia.com)
  */
 
-#include <common.h>
 #include <dm.h>
+#include <log.h>
 #include <malloc.h>
 #include <errno.h>
 #include <fdtdec.h>
@@ -23,14 +22,12 @@
 #include <dm/device-internal.h>
 #include <dt-bindings/gpio/gpio.h>
 
-DECLARE_GLOBAL_DATA_PTR;
-
-static const int CONFIG_SFIO = 0;
-static const int CONFIG_GPIO = 1;
+static const int CFG_SFIO = 0;
+static const int CFG_GPIO = 1;
 static const int DIRECTION_INPUT = 0;
 static const int DIRECTION_OUTPUT = 1;
 
-struct tegra_gpio_platdata {
+struct tegra_gpio_plat {
 	struct gpio_ctlr_bank *bank;
 	const char *port_name;	/* Name of port, e.g. "B" */
 	int base_gpio;		/* Port number for this port (0, 1,.., n-1) */
@@ -56,7 +53,7 @@ static int get_config(unsigned gpio)
 	debug("get_config: port = %d, bit = %d is %s\n",
 		GPIO_FULLPORT(gpio), GPIO_BIT(gpio), type ? "GPIO" : "SFPIO");
 
-	return type ? CONFIG_GPIO : CONFIG_SFIO;
+	return type ? CFG_GPIO : CFG_SFIO;
 }
 
 /* Config pin 'gpio' as GPIO or SFIO, based on 'type' */
@@ -70,7 +67,7 @@ static void set_config(unsigned gpio, int type)
 		GPIO_FULLPORT(gpio), GPIO_BIT(gpio), type ? "GPIO" : "SFPIO");
 
 	u = readl(&bank->gpio_config[GPIO_PORT(gpio)]);
-	if (type != CONFIG_SFIO)
+	if (type != CFG_SFIO)
 		u |= 1 << GPIO_BIT(gpio);
 	else
 		u &= ~(1 << GPIO_BIT(gpio));
@@ -185,21 +182,6 @@ static int tegra_gpio_get_value(struct udevice *dev, unsigned offset)
 	return (val >> GPIO_BIT(gpio)) & 1;
 }
 
-/* write GPIO OUT value to pin 'gpio' */
-static int tegra_gpio_set_value(struct udevice *dev, unsigned offset, int value)
-{
-	struct tegra_port_info *state = dev_get_priv(dev);
-	int gpio = state->base_gpio + offset;
-
-	debug("gpio_set_value: pin = %d (port %d:bit %d), value = %d\n",
-	      gpio, GPIO_FULLPORT(gpio), GPIO_BIT(gpio), value);
-
-	/* Configure GPIO output value. */
-	set_level(gpio, value);
-
-	return 0;
-}
-
 void gpio_config_table(const struct tegra_gpio_config *config, int len)
 {
 	int i;
@@ -218,7 +200,7 @@ void gpio_config_table(const struct tegra_gpio_config *config, int len)
 			set_direction(config[i].gpio, DIRECTION_OUTPUT);
 			break;
 		}
-		set_config(config[i].gpio, CONFIG_GPIO);
+		set_config(config[i].gpio, CFG_GPIO);
 	}
 }
 
@@ -251,14 +233,94 @@ static int tegra_gpio_xlate(struct udevice *dev, struct gpio_desc *desc,
 	return 0;
 }
 
+static int tegra_gpio_rfree(struct udevice *dev, unsigned int offset)
+{
+	struct tegra_port_info *state = dev_get_priv(dev);
+
+	/* Set the pin as a SFIO */
+	set_config(state->base_gpio + offset, CFG_SFIO);
+
+	return 0;
+}
+
+static int tegra_gpio_set_flags(struct udevice *dev, unsigned int offset, ulong flags)
+{
+	struct tegra_port_info *state = dev_get_priv(dev);
+	int gpio = state->base_gpio + offset;
+
+	debug("gpio_set_flags: pin = %d (port %d:bit %d), flag = %lx\n",
+	      gpio, GPIO_FULLPORT(gpio), GPIO_BIT(gpio), flags);
+
+	if (flags & GPIOD_IS_AF) {
+		return tegra_gpio_rfree(dev, offset);
+	} else if (flags & GPIOD_IS_IN) {
+		return tegra_gpio_direction_input(dev, offset);
+	} else if (flags & GPIOD_IS_OUT) {
+		bool value = flags & GPIOD_IS_OUT_ACTIVE;
+
+		return tegra_gpio_direction_output(dev, offset, value);
+	}
+
+	return 0;
+}
+
 static const struct dm_gpio_ops gpio_tegra_ops = {
-	.direction_input	= tegra_gpio_direction_input,
-	.direction_output	= tegra_gpio_direction_output,
+	.set_flags		= tegra_gpio_set_flags,
 	.get_value		= tegra_gpio_get_value,
-	.set_value		= tegra_gpio_set_value,
 	.get_function		= tegra_gpio_get_function,
 	.xlate			= tegra_gpio_xlate,
+	.rfree			= tegra_gpio_rfree,
 };
+
+/*
+ * SPL GPIO functions.
+ */
+int spl_gpio_output(void *regs, uint gpio, int value)
+{
+	/* Configure GPIO output value. */
+	set_level(gpio, value);
+
+	/* Configure GPIO direction as output. */
+	set_direction(gpio, DIRECTION_OUTPUT);
+
+	/* Enable the pin as a GPIO */
+	set_config(gpio, 1);
+
+	return 0;
+}
+
+int spl_gpio_input(void *regs, uint gpio)
+{
+	/* Configure GPIO direction as input. */
+	set_direction(gpio, DIRECTION_INPUT);
+
+	/* Enable the pin as a GPIO */
+	set_config(gpio, 1);
+
+	return 0;
+}
+
+int spl_gpio_get_value(void *regs, uint gpio)
+{
+	struct gpio_ctlr *ctlr = (struct gpio_ctlr *)NV_PA_GPIO_BASE;
+	struct gpio_ctlr_bank *bank = &ctlr->gpio_bank[GPIO_BANK(gpio)];
+	int val;
+
+	if (get_direction(gpio) == DIRECTION_INPUT)
+		val = readl(&bank->gpio_in[GPIO_PORT(gpio)]);
+	else
+		val = readl(&bank->gpio_out[GPIO_PORT(gpio)]);
+
+	return (val >> GPIO_BIT(gpio)) & 1;
+}
+
+int spl_gpio_set_value(void *regs, uint gpio, int value)
+{
+	/* Configure GPIO output value. */
+	set_level(gpio, value);
+
+	return 0;
+}
 
 /**
  * Returns the name of a GPIO port
@@ -266,7 +328,7 @@ static const struct dm_gpio_ops gpio_tegra_ops = {
  * GPIOs are named A, B, C, ..., Z, AA, BB, CC, ...
  *
  * @base_port: Base port number (0, 1..n-1)
- * @return allocated string containing the name
+ * Return: allocated string containing the name
  */
 static char *gpio_port_name(int base_port)
 {
@@ -293,8 +355,8 @@ static const struct udevice_id tegra_gpio_ids[] = {
 static int gpio_tegra_probe(struct udevice *dev)
 {
 	struct gpio_dev_priv *uc_priv = dev_get_uclass_priv(dev);
-	struct tegra_port_info *priv = dev->priv;
-	struct tegra_gpio_platdata *plat = dev->platdata;
+	struct tegra_port_info *priv = dev_get_priv(dev);
+	struct tegra_gpio_plat *plat = dev_get_plat(dev);
 
 	/* Only child devices have ports */
 	if (!plat)
@@ -315,7 +377,7 @@ static int gpio_tegra_probe(struct udevice *dev)
  */
 static int gpio_tegra_bind(struct udevice *parent)
 {
-	struct tegra_gpio_platdata *plat = parent->platdata;
+	struct tegra_gpio_plat *plat = dev_get_plat(parent);
 	struct gpio_ctlr *ctlr;
 	int bank_count;
 	int bank;
@@ -326,7 +388,7 @@ static int gpio_tegra_bind(struct udevice *parent)
 		return 0;
 
 	/* TODO(sjg@chromium.org): Remove once SPL supports device tree */
-#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_XPL_BUILD
 	ctlr = (struct gpio_ctlr *)NV_PA_GPIO_BASE;
 	bank_count = TEGRA_GPIO_BANKS;
 #else
@@ -341,8 +403,8 @@ static int gpio_tegra_bind(struct udevice *parent)
 	if (len < 0)
 		return len;
 	bank_count = len / 3 / sizeof(u32);
-	ctlr = (struct gpio_ctlr *)dev_read_addr(parent);
-	if ((ulong)ctlr == FDT_ADDR_T_NONE)
+	ctlr = dev_read_addr_ptr(parent);
+	if (!ctlr)
 		return -EINVAL;
 	}
 #endif
@@ -350,7 +412,7 @@ static int gpio_tegra_bind(struct udevice *parent)
 		int port;
 
 		for (port = 0; port < TEGRA_PORTS_PER_BANK; port++) {
-			struct tegra_gpio_platdata *plat;
+			struct tegra_gpio_plat *plat;
 			struct udevice *dev;
 			int base_port;
 
@@ -363,10 +425,10 @@ static int gpio_tegra_bind(struct udevice *parent)
 			plat->port_name = gpio_port_name(base_port);
 
 			ret = device_bind(parent, parent->driver,
-					  plat->port_name, plat, -1, &dev);
+					  plat->port_name, plat,
+					  dev_ofnode(parent), &dev);
 			if (ret)
 				return ret;
-			dev_set_of_offset(dev, dev_of_offset(parent));
 		}
 	}
 
@@ -379,7 +441,6 @@ U_BOOT_DRIVER(gpio_tegra) = {
 	.of_match = tegra_gpio_ids,
 	.bind	= gpio_tegra_bind,
 	.probe = gpio_tegra_probe,
-	.priv_auto_alloc_size = sizeof(struct tegra_port_info),
+	.priv_auto	= sizeof(struct tegra_port_info),
 	.ops	= &gpio_tegra_ops,
-	.flags	= DM_FLAG_PRE_RELOC,
 };

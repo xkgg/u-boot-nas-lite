@@ -1,21 +1,34 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2016 Carlo Caione <carlo@caione.org>
- *
- * SPDX-License-Identifier:    GPL-2.0+
  */
 
-#include <common.h>
+#include <clk.h>
+#include <cpu_func.h>
 #include <dm.h>
 #include <fdtdec.h>
 #include <malloc.h>
+#include <pwrseq.h>
 #include <mmc.h>
 #include <asm/io.h>
-#include <asm/arch/sd_emmc.h>
+#include <asm/gpio.h>
+#include <linux/delay.h>
 #include <linux/log2.h>
+#include "meson_gx_mmc.h"
+
+#if CONFIG_IS_ENABLED(DM_MMC)
+bool meson_gx_mmc_is_compatible(struct udevice *dev,
+				enum meson_gx_mmc_compatible family)
+{
+	enum meson_gx_mmc_compatible compat = dev_get_driver_data(dev);
+
+	return compat == family;
+}
+#endif
 
 static inline void *get_regbase(const struct mmc *mmc)
 {
-	struct meson_mmc_platdata *pdata = mmc->priv;
+	struct meson_mmc_plat *pdata = mmc->priv;
 
 	return pdata->regbase;
 }
@@ -35,6 +48,11 @@ static void meson_mmc_config_clock(struct mmc *mmc)
 	uint32_t meson_mmc_clk = 0;
 	unsigned int clk, clk_src, clk_div;
 
+	if (!mmc->clock)
+		return;
+
+	/* TOFIX This should use the proper clock taken from DT */
+
 	/* 1GHz / CLK_MAX_DIV = 15,9 MHz */
 	if (mmc->clock > 16000000) {
 		clk = SD_EMMC_CLKSRC_DIV2;
@@ -45,8 +63,20 @@ static void meson_mmc_config_clock(struct mmc *mmc)
 	}
 	clk_div = DIV_ROUND_UP(clk, mmc->clock);
 
-	/* 180 phase core clock */
+	/*
+	 * SM1 SoCs doesn't work fine over 50MHz with CLK_CO_PHASE_180
+	 * If CLK_CO_PHASE_270 is used, it's more stable than other.
+	 * Other SoCs use CLK_CO_PHASE_180 by default.
+	 * It needs to find what is a proper value about each SoCs.
+	 */
+#if CONFIG_IS_ENABLED(DM_MMC)
+	if (meson_gx_mmc_is_compatible(mmc->dev, MMC_COMPATIBLE_SM1))
+		meson_mmc_clk |= CLK_CO_PHASE_270;
+	else
+		meson_mmc_clk |= CLK_CO_PHASE_180;
+#else /* U-Boot SPL on GX SoCs */
 	meson_mmc_clk |= CLK_CO_PHASE_180;
+#endif
 
 	/* 180 phase tx clock */
 	meson_mmc_clk |= CLK_TX_PHASE_000;
@@ -58,9 +88,14 @@ static void meson_mmc_config_clock(struct mmc *mmc)
 	meson_write(mmc, meson_mmc_clk, MESON_SD_EMMC_CLOCK);
 }
 
+#if CONFIG_IS_ENABLED(DM_MMC)
 static int meson_dm_mmc_set_ios(struct udevice *dev)
 {
 	struct mmc *mmc = mmc_get_mmc_dev(dev);
+#else /* U-Boot SPL */
+static int meson_legacy_mmc_set_ios(struct mmc *mmc)
+{
+#endif
 	uint32_t meson_mmc_cfg;
 
 	meson_mmc_config_clock(mmc);
@@ -135,7 +170,7 @@ static void meson_mmc_setup_cmd(struct mmc *mmc, struct mmc_data *data,
 
 static void meson_mmc_setup_addr(struct mmc *mmc, struct mmc_data *data)
 {
-	struct meson_mmc_platdata *pdata = mmc->priv;
+	struct meson_mmc_plat *pdata = mmc->priv;
 	unsigned int data_size;
 	uint32_t data_addr = 0;
 
@@ -169,11 +204,17 @@ static void meson_mmc_read_response(struct mmc *mmc, struct mmc_cmd *cmd)
 	}
 }
 
+#if CONFIG_IS_ENABLED(DM_MMC)
 static int meson_dm_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 				 struct mmc_data *data)
 {
 	struct mmc *mmc = mmc_get_mmc_dev(dev);
-	struct meson_mmc_platdata *pdata = mmc->priv;
+#else /* U-Boot SPL */
+static int meson_legacy_mmc_send_cmd(struct mmc *mmc, struct mmc_cmd *cmd,
+				     struct mmc_data *data)
+{
+#endif
+	struct meson_mmc_plat *pdata = mmc->priv;
 	uint32_t status;
 	ulong start;
 	int ret = 0;
@@ -211,17 +252,70 @@ static int meson_dm_mmc_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
 	return ret;
 }
 
+#if !CONFIG_IS_ENABLED(DM_MMC) /* Non-DM MMC driver for use in U-Boot SPL */
+struct meson_mmc_plat mmc_plat[2];
+
+static int meson_legacy_mmc_init(struct mmc *mmc)
+{
+	/* reset all status bits */
+	meson_write(mmc, STATUS_MASK, MESON_SD_EMMC_STATUS);
+
+	/* disable interrupts */
+	meson_write(mmc, 0, MESON_SD_EMMC_IRQ_EN);
+
+	return 0;
+}
+
+static const struct mmc_ops meson_mmc_ops = {
+	.send_cmd	= meson_legacy_mmc_send_cmd,
+	.set_ios	= meson_legacy_mmc_set_ios,
+	.init		= meson_legacy_mmc_init,
+};
+
+struct mmc *meson_mmc_init(int mmc_no)
+{
+	struct meson_mmc_plat *pdata = &mmc_plat[mmc_no];
+	struct mmc_config *cfg = &pdata->cfg;
+
+	cfg->voltages = MMC_VDD_33_34 | MMC_VDD_32_33 |
+			MMC_VDD_31_32 | MMC_VDD_165_195;
+	cfg->host_caps = MMC_MODE_8BIT | MMC_MODE_4BIT;
+	cfg->f_min = DIV_ROUND_UP(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
+	cfg->f_max = 6000000; /* 6 MHz */
+	cfg->b_max = 127; /* max 128 - 1 block */
+	cfg->name = "Meson SD/eMMC";
+	cfg->ops = &meson_mmc_ops;
+
+	if (mmc_no == 0) /* MMC1: SD card */
+		pdata->regbase = (void *)0xd0072000;
+	else if (mmc_no == 1) /* MMC2: eMMC */
+		pdata->regbase = (void *)0xd0074000;
+
+#if CONFIG_IS_ENABLED(MMC_PWRSEQ)
+	/* Enable power if needed */
+	ret = mmc_pwrseq_get_power(dev, cfg);
+	if (!ret) {
+		ret = pwrseq_set_power(cfg->pwr_dev, true);
+		if (ret)
+			return ret;
+	}
+#endif
+
+	return mmc_create(cfg, pdata);
+}
+
+#else /* DM-based driver for use in U-Boot proper */
 static const struct dm_mmc_ops meson_dm_mmc_ops = {
 	.send_cmd = meson_dm_mmc_send_cmd,
 	.set_ios = meson_dm_mmc_set_ios,
 };
 
-static int meson_mmc_ofdata_to_platdata(struct udevice *dev)
+static int meson_mmc_of_to_plat(struct udevice *dev)
 {
-	struct meson_mmc_platdata *pdata = dev_get_platdata(dev);
+	struct meson_mmc_plat *pdata = dev_get_plat(dev);
 	fdt_addr_t addr;
 
-	addr = devfdt_get_addr(dev);
+	addr = dev_read_addr(dev);
 	if (addr == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
@@ -232,25 +326,52 @@ static int meson_mmc_ofdata_to_platdata(struct udevice *dev)
 
 static int meson_mmc_probe(struct udevice *dev)
 {
-	struct meson_mmc_platdata *pdata = dev_get_platdata(dev);
+	struct meson_mmc_plat *pdata = dev_get_plat(dev);
 	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
 	struct mmc *mmc = &pdata->mmc;
 	struct mmc_config *cfg = &pdata->cfg;
+	struct clk_bulk clocks;
 	uint32_t val;
+	int ret;
+
+	/* Enable the clocks feeding the MMC controller */
+	ret = clk_get_bulk(dev, &clocks);
+	if (ret)
+		return ret;
+
+	ret = clk_enable_bulk(&clocks);
+	if (ret)
+		return ret;
 
 	cfg->voltages = MMC_VDD_33_34 | MMC_VDD_32_33 |
 			MMC_VDD_31_32 | MMC_VDD_165_195;
 	cfg->host_caps = MMC_MODE_8BIT | MMC_MODE_4BIT |
 			MMC_MODE_HS_52MHz | MMC_MODE_HS;
 	cfg->f_min = DIV_ROUND_UP(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
-	cfg->f_max = 100000000; /* 100 MHz */
+	cfg->f_max = 40000000; /* 40 MHz */
 	cfg->b_max = 511; /* max 512 - 1 blocks */
 	cfg->name = dev->name;
+
+	if (IS_ENABLED(CONFIG_SPL_BUILD)) {
+		cfg->host_caps &= ~(MMC_MODE_HS_52MHz | MMC_MODE_HS);
+		cfg->f_max = 6000000; /* 6 MHz */
+		cfg->b_max = 127; /* max 128 - 1 block */
+	}
 
 	mmc->priv = pdata;
 	upriv->mmc = mmc;
 
-	mmc_set_clock(mmc, cfg->f_min);
+	mmc_set_clock(mmc, cfg->f_min, MMC_CLK_ENABLE);
+
+#if CONFIG_IS_ENABLED(MMC_PWRSEQ)
+	/* Enable power if needed */
+	ret = mmc_pwrseq_get_power(dev, cfg);
+	if (!ret) {
+		ret = pwrseq_set_power(cfg->pwr_dev, true);
+		if (ret)
+			return ret;
+	}
+#endif
 
 	/* reset all status bits */
 	meson_write(mmc, STATUS_MASK, MESON_SD_EMMC_STATUS);
@@ -269,13 +390,15 @@ static int meson_mmc_probe(struct udevice *dev)
 
 int meson_mmc_bind(struct udevice *dev)
 {
-	struct meson_mmc_platdata *pdata = dev_get_platdata(dev);
+	struct meson_mmc_plat *pdata = dev_get_plat(dev);
 
 	return mmc_bind(dev, &pdata->mmc, &pdata->cfg);
 }
 
 static const struct udevice_id meson_mmc_match[] = {
-	{ .compatible = "amlogic,meson-gx-mmc" },
+	{ .compatible = "amlogic,meson-gx-mmc", .data = MMC_COMPATIBLE_GX },
+	{ .compatible = "amlogic,meson-axg-mmc", .data = MMC_COMPATIBLE_GX },
+	{ .compatible = "amlogic,meson-sm1-mmc", .data = MMC_COMPATIBLE_SM1 },
 	{ /* sentinel */ }
 };
 
@@ -286,6 +409,7 @@ U_BOOT_DRIVER(meson_mmc) = {
 	.ops = &meson_dm_mmc_ops,
 	.probe = meson_mmc_probe,
 	.bind = meson_mmc_bind,
-	.ofdata_to_platdata = meson_mmc_ofdata_to_platdata,
-	.platdata_auto_alloc_size = sizeof(struct meson_mmc_platdata),
+	.of_to_plat = meson_mmc_of_to_plat,
+	.plat_auto	= sizeof(struct meson_mmc_plat),
 };
+#endif /* CONFIG_IS_ENABLED(DM_MMC) */

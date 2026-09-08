@@ -1,12 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2016 Rockchip Electronics Co., Ltd
- *
- * SPDX-License-Identifier:     GPL-2.0+
  */
 
-#include <common.h>
 #include <dm.h>
+#include <env.h>
 #include <i2c_eeprom.h>
+#include <init.h>
+#include <net.h>
 #include <netdev.h>
 
 static int get_ethaddr_from_eeprom(u8 *addr)
@@ -21,7 +22,7 @@ static int get_ethaddr_from_eeprom(u8 *addr)
 	return i2c_eeprom_read(dev, 0, addr, 6);
 }
 
-int rk3288_board_late_init(void)
+int rockchip_early_misc_init_r(void)
 {
 	u8 ethaddr[6];
 

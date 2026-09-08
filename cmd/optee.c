@@ -1,289 +1,71 @@
-/* SPDX-License-Identifier:     GPL-2.0+
- *
- * Copyright 2019, Rockchip Electronics Co., Ltd
- *
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * (C) Copyright 2024, Advanced Micro Devices, Inc.
  */
+#include <command.h>
+#include <errno.h>
+#include <tee.h>
+#include <vsprintf.h>
+#include <linux/string.h>
 
-#include <common.h>
-#include <optee_include/OpteeClientApiLib.h>
-#include <optee_include/tee_client_api.h>
-#include <optee_include/tee_api_defines.h>
-#include <boot_rkimg.h>
-#include <stdlib.h>
+#define TA_HELLO_WORLD_CMD_INC_VALUE 0
+/* This needs to match the UUID of the Hello World TA. */
+#define TA_HELLO_WORLD_UUID \
+	{ 0x8aaaf200, 0x2450, 0x11e4, \
+	{ 0xab, 0xe2, 0x00, 0x02, 0xa5, 0xd5, 0xc5, 0x1b} }
 
-int test_secure_storage_default(void)
+static int hello_world_ta(unsigned int value)
 {
-	TEEC_Result TeecResult;
-	TEEC_Context TeecContext;
-	TEEC_Session TeecSession;
-	uint32_t ErrorOrigin;
-	TEEC_UUID tempuuid = { 0x1b484ea5, 0x698b, 0x4142,
-		{ 0x82, 0xb8, 0x3a, 0xcf, 0x16, 0xe9, 0x9e, 0x2a } };
-	TEEC_UUID *TeecUuid = &tempuuid;
-	TEEC_Operation TeecOperation = {0};
-	struct blk_desc *dev_desc;
+	const struct tee_optee_ta_uuid uuid = TA_HELLO_WORLD_UUID;
+	struct tee_open_session_arg session_arg;
+	struct udevice *tee = NULL;
+	struct tee_invoke_arg arg;
+	struct tee_param param[2];
+	int rc;
 
-	dev_desc = rockchip_get_bootdev();
-	if (!dev_desc) {
-		printf("%s: dev_desc is NULL!\n", __func__);
-		return -1;
+	tee = tee_find_device(tee, NULL, NULL, NULL);
+	if (!tee)
+		return -ENODEV;
+
+	memset(&session_arg, 0, sizeof(session_arg));
+	tee_optee_ta_uuid_to_octets(session_arg.uuid, &uuid);
+	rc = tee_open_session(tee, &session_arg, 0, NULL);
+	if (rc) {
+		printf("tee_open_session(): failed(%d)\n", rc);
+		return rc;
 	}
 
-	debug("%s start\n", __func__);
-	TeecResult = OpteeClientApiLibInitialize();
-	if (TeecResult != TEEC_SUCCESS)
-		return -1;
+	arg.func = TA_HELLO_WORLD_CMD_INC_VALUE;
+	arg.session = session_arg.session;
 
-	TeecResult = TEEC_InitializeContext(NULL, &TeecContext);
-	if (TeecResult != TEEC_SUCCESS)
-		return -1;
+	param[0].attr = TEE_PARAM_ATTR_TYPE_VALUE_INOUT;
+	param[0].u.value.a = value;
 
-	TeecOperation.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
-						    TEEC_NONE,
-						    TEEC_NONE,
-						    TEEC_NONE);
-	/*0 nand or emmc "security" partition , 1 rpmb*/
-	if (dev_desc->if_type == IF_TYPE_MMC && dev_desc->devnum == 0)
-		TeecOperation.params[0].value.a = 1;
-	else
-		TeecOperation.params[0].value.a = 0;
+	printf("Value before: 0x%x\n", (int)param[0].u.value.a);
+	printf("Calling TA\n");
+	tee_invoke_func(tee, &arg, 1, param);
 
-	TeecResult = TEEC_OpenSession(&TeecContext,
-				      &TeecSession,
-				      TeecUuid,
-				      TEEC_LOGIN_PUBLIC,
-				      NULL,
-				      &TeecOperation,
-				      &ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_OpenSession fail!\n", __func__);
-		return -1;
-	}
-
-	TEEC_SharedMemory SharedMem0 = {0};
-
-	SharedMem0.size = sizeof("filename_test_secure_storage_default");
-	SharedMem0.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem0);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	memcpy(SharedMem0.buffer,
-	       "filename_test_secure_storage_default",
-	       SharedMem0.size);
-
-	TEEC_SharedMemory SharedMem1 = {0};
-
-	SharedMem1.size = 1024 * 8;
-	SharedMem1.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem1);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	memset(SharedMem1.buffer, 'a', SharedMem1.size);
-
-	TeecOperation.params[0].tmpref.buffer = SharedMem0.buffer;
-	TeecOperation.params[0].tmpref.size = SharedMem0.size;
-
-	TeecOperation.params[1].tmpref.buffer = SharedMem1.buffer;
-	TeecOperation.params[1].tmpref.size = SharedMem1.size;
-
-	TeecOperation.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-						    TEEC_MEMREF_TEMP_INOUT,
-						    TEEC_NONE,
-						    TEEC_NONE);
-
-	TeecResult = TEEC_InvokeCommand(&TeecSession,//write data
-					1,
-					&TeecOperation,
-					&ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_InvokeCommand fail!\n", __func__);
-		return -1;
-	}
-
-	TEEC_SharedMemory SharedMem2 = {0};
-
-	SharedMem2.size = 1024 * 8;
-	SharedMem2.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem2);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	TeecOperation.params[0].tmpref.buffer = SharedMem0.buffer;
-	TeecOperation.params[0].tmpref.size = SharedMem0.size;
-
-	TeecOperation.params[1].tmpref.buffer = SharedMem2.buffer;
-	TeecOperation.params[1].tmpref.size = SharedMem2.size;
-
-	TeecResult = TEEC_InvokeCommand(&TeecSession,//read data
-					0,
-					&TeecOperation,
-					&ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_InvokeCommand fail!\n", __func__);
-		return -1;
-	}
-	if (memcmp(SharedMem1.buffer, SharedMem2.buffer,
-	    SharedMem1.size) != 0) {
-		printf("error! %s read not equal to write!\n", __func__);
-		return -1;
-	}
-
-	TEEC_ReleaseSharedMemory(&SharedMem0);
-	TEEC_ReleaseSharedMemory(&SharedMem1);
-	TEEC_ReleaseSharedMemory(&SharedMem2);
-
-	TEEC_CloseSession(&TeecSession);
-
-	TEEC_FinalizeContext(&TeecContext);
-
-	debug("%s end\n", __func__);
-	return 0;
+	printf("Value after: 0x%x\n", (int)param[0].u.value.a);
+	return tee_close_session(tee, session_arg.session);
 }
 
-int test_secure_storage_security_partition(void)
+static int do_optee_hello_world_ta(struct cmd_tbl *cmdtp, int flag, int argc,
+				   char * const argv[])
 {
-	TEEC_Result TeecResult;
-	TEEC_Context TeecContext;
-	TEEC_Session TeecSession;
-	uint32_t ErrorOrigin;
-	TEEC_UUID tempuuid = { 0x1b484ea5, 0x698b, 0x4142,
-		{ 0x82, 0xb8, 0x3a, 0xcf, 0x16, 0xe9, 0x9e, 0x2a } };
-	TEEC_UUID *TeecUuid = &tempuuid;
-	TEEC_Operation TeecOperation = {0};
-	struct blk_desc *dev_desc;
+	int ret, value = 0;
 
-	dev_desc = rockchip_get_bootdev();
-	if (!dev_desc) {
-		printf("%s: dev_desc is NULL!\n", __func__);
-		return -1;
-	}
+	if (argc > 1)
+		value = hextoul(argv[1], NULL);
 
-	debug("%s start\n", __func__);
-	TeecResult = OpteeClientApiLibInitialize();
-	if (TeecResult != TEEC_SUCCESS)
-		return -1;
+	ret = hello_world_ta(value);
+	if (ret)
+		return CMD_RET_FAILURE;
 
-	TeecResult = TEEC_InitializeContext(NULL, &TeecContext);
-	if (TeecResult != TEEC_SUCCESS)
-		return -1;
-
-	TeecOperation.paramTypes = TEEC_PARAM_TYPES(TEEC_VALUE_INPUT,
-						    TEEC_NONE,
-						    TEEC_NONE,
-						    TEEC_NONE);
-	/*0 nand or emmc "security" partition , 1 rpmb*/
-	TeecOperation.params[0].value.a = 0;//use security partition
-
-	TeecResult = TEEC_OpenSession(&TeecContext,
-				      &TeecSession,
-				      TeecUuid,
-				      TEEC_LOGIN_PUBLIC,
-				      NULL,
-				      &TeecOperation,
-				      &ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_OpenSession fail!\n", __func__);
-		return -1;
-	}
-
-	TEEC_SharedMemory SharedMem0 = {0};
-
-	SharedMem0.size = sizeof("filename_test_secure_storage_security_partition");
-	SharedMem0.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem0);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	memcpy(SharedMem0.buffer,
-	       "filename_test_secure_storage_security_partition",
-	       SharedMem0.size);
-
-	TEEC_SharedMemory SharedMem1 = {0};
-
-	SharedMem1.size = 1024 * 8;
-	SharedMem1.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem1);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	memset(SharedMem1.buffer, 'b', SharedMem1.size);
-
-	TeecOperation.params[0].tmpref.buffer = SharedMem0.buffer;
-	TeecOperation.params[0].tmpref.size = SharedMem0.size;
-
-	TeecOperation.params[1].tmpref.buffer = SharedMem1.buffer;
-	TeecOperation.params[1].tmpref.size = SharedMem1.size;
-
-	TeecOperation.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_INPUT,
-						    TEEC_MEMREF_TEMP_INOUT,
-						    TEEC_NONE,
-						    TEEC_NONE);
-
-	TeecResult = TEEC_InvokeCommand(&TeecSession,//write data
-					1,
-					&TeecOperation,
-					&ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_InvokeCommand fail!\n", __func__);
-		return -1;
-	}
-
-	TEEC_SharedMemory SharedMem2 = {0};
-
-	SharedMem2.size = 1024 * 8;
-	SharedMem2.flags = 0;
-
-	TeecResult = TEEC_AllocateSharedMemory(&TeecContext, &SharedMem2);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_AllocateSharedMemory fail!\n", __func__);
-		return -1;
-	}
-
-	TeecOperation.params[0].tmpref.buffer = SharedMem0.buffer;
-	TeecOperation.params[0].tmpref.size = SharedMem0.size;
-
-	TeecOperation.params[1].tmpref.buffer = SharedMem2.buffer;
-	TeecOperation.params[1].tmpref.size = SharedMem2.size;
-
-	TeecResult = TEEC_InvokeCommand(&TeecSession,//read data
-					0,
-					&TeecOperation,
-					&ErrorOrigin);
-	if (TeecResult != TEEC_SUCCESS) {
-		printf("%s TEEC_InvokeCommand fail!\n", __func__);
-		return -1;
-	}
-	if (memcmp(SharedMem1.buffer, SharedMem2.buffer,
-	    SharedMem1.size) != 0) {
-		printf("error! %s read not equal to write!\n", __func__);
-		return -1;
-	}
-
-	TEEC_ReleaseSharedMemory(&SharedMem0);
-	TEEC_ReleaseSharedMemory(&SharedMem1);
-	TEEC_ReleaseSharedMemory(&SharedMem2);
-
-	TEEC_CloseSession(&TeecSession);
-
-	TEEC_FinalizeContext(&TeecContext);
-
-	debug("%s end\n", __func__);
-	return 0;
+	return CMD_RET_SUCCESS;
 }
+
+U_BOOT_LONGHELP(optee,
+	"hello [<value>]   Invoke the OP-TEE 'Hello World' TA\n");
+
+U_BOOT_CMD_WITH_SUBCMDS(optee, "OP-TEE commands", optee_help_text,
+	U_BOOT_SUBCMD_MKENT(hello, 2, 1, do_optee_hello_world_ta));

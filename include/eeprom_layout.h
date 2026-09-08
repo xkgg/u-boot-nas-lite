@@ -1,14 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2009-2016 CompuLab, Ltd.
  *
  * Authors: Nikita Kiryanov <nikita@compulab.co.il>
  *	    Igor Grinberg <grinberg@compulab.co.il>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _LAYOUT_
 #define _LAYOUT_
+
+#include <eeprom_field.h>
 
 #define RESERVED_FIELDS			NULL
 #define LAYOUT_VERSION_UNRECOGNIZED	-1
@@ -25,6 +26,8 @@ struct eeprom_layout {
 		      char *new_data);
 };
 
+struct eeprom_field *eeprom_layout_find_field(struct eeprom_layout *layout,
+					      char *field_name, bool warn);
 void eeprom_layout_setup(struct eeprom_layout *layout, unsigned char *buf,
 			 unsigned int buf_size, int layout_version);
 __weak void __eeprom_layout_assign(struct eeprom_layout *layout,

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2006 Tensilica Inc.
  * Copyright (C) 2014 - 2016 Cadence Design Systems Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _XTENSA_CACHEASM_H
@@ -52,7 +51,6 @@
 
 	.endm
 
-
 	.macro	__loop_cache_range ar as at insn line_width
 
 	extui	\at, \ar, 0, \line_width
@@ -63,7 +61,6 @@
 	__endla	\ar, \at, (1 << (\line_width))
 
 	.endm
-
 
 	.macro	__loop_cache_page ar at insn line_width
 
@@ -78,7 +75,6 @@
 
 	.endm
 
-
 	.macro	___unlock_dcache_all ar at
 
 #if XCHAL_DCACHE_LINE_LOCKABLE && XCHAL_DCACHE_SIZE
@@ -86,7 +82,6 @@
 #endif
 
 	.endm
-
 
 	.macro	___unlock_icache_all ar at
 
@@ -96,7 +91,6 @@
 
 	.endm
 
-
 	.macro	___flush_invalidate_dcache_all ar at
 
 #if XCHAL_DCACHE_SIZE
@@ -105,7 +99,6 @@
 
 	.endm
 
-
 	.macro	___flush_dcache_all ar at
 
 #if XCHAL_DCACHE_SIZE
@@ -113,7 +106,6 @@
 #endif
 
 	.endm
-
 
 	.macro	___invalidate_dcache_all ar at
 
@@ -124,7 +116,6 @@
 
 	.endm
 
-
 	.macro	___invalidate_icache_all ar at
 
 #if XCHAL_ICACHE_SIZE
@@ -134,8 +125,6 @@
 
 	.endm
 
-
-
 	.macro	___flush_invalidate_dcache_range ar as at
 
 #if XCHAL_DCACHE_SIZE
@@ -143,7 +132,6 @@
 #endif
 
 	.endm
-
 
 	.macro	___flush_dcache_range ar as at
 
@@ -153,7 +141,6 @@
 
 	.endm
 
-
 	.macro	___invalidate_dcache_range ar as at
 
 #if XCHAL_DCACHE_SIZE
@@ -161,7 +148,6 @@
 #endif
 
 	.endm
-
 
 	.macro	___invalidate_icache_range ar as at
 
@@ -171,8 +157,6 @@
 
 	.endm
 
-
-
 	.macro	___flush_invalidate_dcache_page ar as
 
 #if XCHAL_DCACHE_SIZE
@@ -180,7 +164,6 @@
 #endif
 
 	.endm
-
 
 	.macro ___flush_dcache_page ar as
 
@@ -190,7 +173,6 @@
 
 	.endm
 
-
 	.macro	___invalidate_dcache_page ar as
 
 #if XCHAL_DCACHE_SIZE
@@ -198,7 +180,6 @@
 #endif
 
 	.endm
-
 
 	.macro	___invalidate_icache_page ar as
 

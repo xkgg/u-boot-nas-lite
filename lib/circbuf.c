@@ -1,15 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2003
  * Gerry Hamel, geh@ti.com, Texas Instruments
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <log.h>
 #include <malloc.h>
 
 #include <circbuf.h>
-
 
 int buf_init (circbuf_t * buf, unsigned int size)
 {

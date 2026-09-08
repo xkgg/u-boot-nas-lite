@@ -1,97 +1,107 @@
-/* SPDX-License-Identifier:     GPL-2.0+ */
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2018 Rockchip Electronics Co., Ltd
+ * Copyright (C) 2019 Rockchip Electronics Co., Ltd
  */
+
+#include "rockchip-u-boot.dtsi"
 
 / {
 	aliases {
 		mmc0 = &emmc;
 		mmc1 = &sdmmc;
+		mmc2 = &sdio0;
+		mmc3 = &sdio1;
 	};
 
 	chosen {
-		stdout-path = &uart2;
-		u-boot,spl-boot-order = &emmc, &sdmmc;
+		u-boot,spl-boot-order = \
+			"same-as-spl", &emmc, &sdmmc;
+	};
+
+	dmc: dmc@ff610000 {
+		compatible = "rockchip,rk3288-dmc", "syscon";
+		reg = <0x0 0xff610000 0x0 0x3fc
+		       0x0 0xff620000 0x0 0x294
+		       0x0 0xff630000 0x0 0x3fc
+		       0x0 0xff640000 0x0 0x294>;
+		clocks = <&cru PCLK_DDRUPCTL0>, <&cru PCLK_PUBL0>,
+			 <&cru PCLK_DDRUPCTL1>, <&cru PCLK_PUBL1>,
+			 <&cru ARMCLK>;
+		clock-names = "pclk_ddrupctl0", "pclk_publ0",
+			      "pclk_ddrupctl1", "pclk_publ1",
+			      "arm_clk";
+		rockchip,cru = <&cru>;
+		rockchip,grf = <&grf>;
+		rockchip,noc = <&noc>;
+		rockchip,pmu = <&pmu>;
+		rockchip,sgrf = <&sgrf>;
+		rockchip,sram = <&ddr_sram>;
+		bootph-all;
+	};
+
+	noc: syscon@ffac0000 {
+		compatible = "rockchip,rk3288-noc", "syscon";
+		reg = <0x0 0xffac0000 0x0 0x2000>;
+		bootph-all;
 	};
 };
 
-&psci {
-	u-boot,dm-pre-reloc;
-	status = "okay";
+&bus_intmem {
+	ddr_sram: ddr-sram@1000 {
+		compatible = "rockchip,rk3288-ddr-sram";
+		reg = <0x1000 0x4000>;
+	};
+};
+
+&cru {
+	bootph-all;
+};
+
+&edp {
+	clocks = <&cru SCLK_EDP>, <&cru SCLK_EDP_24M>, <&cru PCLK_EDP_CTRL>;
+	clock-names = "clk_edp", "clk_edp_24m", "pclk_edp";
+};
+
+&gpio7 {
+	bootph-all;
+};
+
+&grf {
+	bootph-all;
+};
+
+&pmu {
+	bootph-all;
+};
+
+&sgrf {
+	bootph-all;
+};
+
+&uart0 {
+	clock-frequency = <24000000>;
+};
+
+&uart1 {
+	clock-frequency = <24000000>;
 };
 
 &uart2 {
 	clock-frequency = <24000000>;
-	u-boot,dm-pre-reloc;
-	status = "okay";
 };
 
-&pmu {
-	u-boot,dm-pre-reloc;
+&uart3 {
+	clock-frequency = <24000000>;
 };
 
-&sgrf {
-	u-boot,dm-pre-reloc;
+&vopb {
+	bootph-some-ram;
 };
 
-&grf {
-	u-boot,dm-pre-reloc;
+&vopl {
+	bootph-some-ram;
 };
 
-&crypto {
-	u-boot,dm-pre-reloc;
-};
-
-&cru {
-	u-boot,dm-pre-reloc;
-};
-
-&noc {
-	u-boot,dm-pre-reloc;
-};
-
-&dmc {
-	u-boot,dm-pre-reloc;
-};
-
-&emmc {
-	u-boot,dm-pre-reloc;
-};
-
-&sdmmc {
-	u-boot,dm-pre-reloc;
-};
-
-&pinctrl {
-	u-boot,dm-pre-reloc;
-};
-
-&gpio3 {
-	u-boot,dm-pre-reloc;
-};
-
-&gpio8 {
-	u-boot,dm-pre-reloc;
-};
-
-&gpio6 {
-	u-boot,dm-pre-reloc;
-};
-
-&usbphy0 {
-	u-boot,dm-pre-reloc;
-	status = "okay";
-};
-
-&usbphy {
-	u-boot,dm-pre-reloc;
-};
-
-&usb_otg {
-	u-boot,dm-pre-reloc;
-};
-
-&saradc {
-	u-boot,dm-spl;
-	status = "okay";
+&xin24m {
+	bootph-all;
 };

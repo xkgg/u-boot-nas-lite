@@ -1,12 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2008 - 2013 Tensilica Inc.
  * (C) Copyright 2014 Cadence Design Systems Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <bootm.h>
+#include <bootstage.h>
 #include <command.h>
+#include <cpu_func.h>
+#include <env.h>
+#include <asm/global_data.h>
 #include <u-boot/zlib.h>
 #include <asm/byteorder.h>
 #include <asm/addrspace.h>
@@ -39,15 +42,14 @@ static struct bp_tag *setup_last_tag(struct bp_tag *params)
 
 static struct bp_tag *setup_memory_tag(struct bp_tag *params)
 {
-	struct bd_info *bd = gd->bd;
 	struct meminfo *mem;
 
 	params->id = BP_TAG_MEMORY;
 	params->size = sizeof(struct meminfo);
 	mem = (struct meminfo *)params->data;
 	mem->type = MEMORY_TYPE_CONVENTIONAL;
-	mem->start = bd->bi_memstart;
-	mem->end = bd->bi_memstart + bd->bi_memsize;
+	mem->start = PHYSADDR(gd->ram_base);
+	mem->end = PHYSADDR(gd->ram_base + gd->ram_size);
 
 	printf("   MEMORY:          tag:0x%04x, type:0X%lx, start:0X%lx, end:0X%lx\n",
 	       BP_TAG_MEMORY, mem->type, mem->start, mem->end);
@@ -132,8 +134,9 @@ static struct bp_tag *setup_fdt_tag(struct bp_tag *params, void *fdt_start)
  * Boot Linux.
  */
 
-int do_bootm_linux(int flag, int argc, char *argv[], bootm_headers_t *images)
+int do_bootm_linux(int flag, struct bootm_info *bmi)
 {
+	struct bootm_headers *images = bmi->images;
 	struct bp_tag *params, *params_start;
 	ulong initrd_start, initrd_end;
 	char *commandline = env_get("bootargs");
@@ -175,6 +178,8 @@ int do_bootm_linux(int flag, int argc, char *argv[], bootm_headers_t *images)
 	printf("Transferring Control to Linux @0x%08lx ...\n\n",
 	       (ulong)images->ep);
 
+	bootm_final(flag);
+
 	flush_dcache_range((unsigned long)params_start, (unsigned long)params);
 
 	if (flag & BOOTM_STATE_OS_FAKE_GO)
@@ -194,4 +199,3 @@ int do_bootm_linux(int flag, int argc, char *argv[], bootm_headers_t *images)
 
 	return 1;
 }
-

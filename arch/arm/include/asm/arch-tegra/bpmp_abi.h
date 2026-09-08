@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2014-2016, NVIDIA CORPORATION.
- *
- * SPDX-License-Identifier: GPL-2.0
  */
 
 #ifndef _ABI_BPMP_ABI_H_
@@ -29,7 +28,6 @@
 /**
  * @file
  */
-
 
 /**
  * @defgroup MRQ MRQ Messages
@@ -167,7 +165,6 @@ struct mrq_response {
  *   @defgroup EMC
  * @}
  */
-
 
 /**
  * @ingroup MRQ_Codes
@@ -616,7 +613,6 @@ struct mrq_debugfs_response {
 #define DEBUGFS_S_IRUSR	(1 << 8)
 #define DEBUGFS_S_IWUSR	(1 << 7)
 /** @} */
-
 
 /**
  * @ingroup MRQ_Codes

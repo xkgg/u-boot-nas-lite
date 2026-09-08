@@ -1,12 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 2016-2017 Intel Corporation <www.intel.com>
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
+#include <log.h>
+#include <linux/errno.h>
 #include <asm/arch/pinmux.h>
 #include <asm/io.h>
-#include <common.h>
 #include <fdtdec.h>
 
 static int do_pinctr_pin(const void *blob, int child, const char *node_name)

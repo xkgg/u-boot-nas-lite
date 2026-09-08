@@ -1,12 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2010-2011 Calxeda, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <ahci.h>
-#include <netdev.h>
+#include <cpu_func.h>
+#include <env.h>
+#include <fdt_support.h>
+#include <fdtdec.h>
+#include <init.h>
+#include <net.h>
 #include <scsi.h>
 
 #include <linux/sizes.h>
@@ -33,8 +36,6 @@
 #define HB_SCU_A9_PWR_DORMANT		2
 #define HB_SCU_A9_PWR_OFF		3
 
-DECLARE_GLOBAL_DATA_PTR;
-
 void cphy_disable_overrides(void);
 
 /*
@@ -46,31 +47,6 @@ int board_init(void)
 
 	return 0;
 }
-
-/* We know all the init functions have been run now */
-int board_eth_init(bd_t *bis)
-{
-	int rc = 0;
-
-#ifdef CONFIG_CALXEDA_XGMAC
-	rc += calxedaxgmac_initialize(0, 0xfff50000);
-	rc += calxedaxgmac_initialize(1, 0xfff51000);
-#endif
-	return rc;
-}
-
-#ifdef CONFIG_SCSI_AHCI_PLAT
-void scsi_init(void)
-{
-	u32 reg = readl(HB_SREG_A9_PWRDOM_STAT);
-
-	cphy_disable_overrides();
-	if (reg & PWRDOM_STAT_SATA) {
-		ahci_init((void __iomem *)HB_AHCI_BASE);
-		scsi_scan(true);
-	}
-}
-#endif
 
 #ifdef CONFIG_MISC_INIT_R
 int misc_init_r(void)
@@ -92,12 +68,16 @@ int misc_init_r(void)
 
 int dram_init(void)
 {
-	gd->ram_size = SZ_512M;
-	return 0;
+	return fdtdec_setup_mem_size_base();
+}
+
+int dram_init_banksize(void)
+{
+	return fdtdec_setup_memory_banksize();
 }
 
 #if defined(CONFIG_OF_BOARD_SETUP)
-int ft_board_setup(void *fdt, bd_t *bd)
+int ft_board_setup(void *fdt, struct bd_info *bd)
 {
 	static const char disabled[] = "disabled";
 	u32 reg = readl(HB_SREG_A9_PWRDOM_STAT);
@@ -114,6 +94,18 @@ int ft_board_setup(void *fdt, bd_t *bd)
 }
 #endif
 
+int board_fdt_blob_setup(void **fdtp)
+{
+	/*
+	 * The ECME management processor loads the DTB from NOR flash
+	 * into DRAM (at 4KB), where it gets patched to contain the
+	 * detected memory size.
+	 */
+	*fdtp = (void *)0x1000;
+
+	return 0;
+}
+
 static int is_highbank(void)
 {
 	uint32_t midr;
@@ -123,7 +115,7 @@ static int is_highbank(void)
 	return (midr & 0xfff0) == 0xc090;
 }
 
-void reset_cpu(ulong addr)
+void reset_cpu(void)
 {
 	writel(HB_PWR_HARD_RESET, HB_SREG_A9_PWR_REQ);
 	if (is_highbank())

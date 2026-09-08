@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Nathan Rossi <nathan@nathanrossi.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * The following Boot Header format/structures and values are defined in the
  * following documents:
@@ -147,6 +146,12 @@ static int zynqimage_verify_header(unsigned char *ptr, int image_size,
 	if (image_size < sizeof(struct zynq_header))
 		return -1;
 
+	if (zynqhdr->__reserved1 != 0)
+		return -1;
+
+	if (zynqhdr->__reserved2 != 0)
+		return -1;
+
 	if (zynqhdr->width_detection != HEADER_WIDTHDETECTION)
 		return -1;
 	if (zynqhdr->image_identifier != HEADER_IMAGEIDENTIFIER)
@@ -158,7 +163,7 @@ static int zynqimage_verify_header(unsigned char *ptr, int image_size,
 	return 0;
 }
 
-static void zynqimage_print_header(const void *ptr)
+static void zynqimage_print_header(const void *ptr, struct image_tool_params *params)
 {
 	struct zynq_header *zynqhdr = (struct zynq_header *)ptr;
 	int i;

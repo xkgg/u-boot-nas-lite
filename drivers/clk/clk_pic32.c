@@ -1,21 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Purna Chandra Mandal <purna.mandal@microchip.com>
  *
- * SPDX-License-Identifier:	GPL-2.0+
- *
  */
 
-#include <common.h>
 #include <clk-uclass.h>
 #include <dm.h>
 #include <div64.h>
+#include <time.h>
 #include <wait_bit.h>
+#include <asm/global_data.h>
 #include <dm/lists.h>
 #include <asm/io.h>
+#include <linux/bitops.h>
+#include <linux/bug.h>
 #include <mach/pic32.h>
 #include <dt-bindings/clock/microchip,clock.h>
 
 DECLARE_GLOBAL_DATA_PTR;
+
+#define CLK_MHZ(x)	((x) / 1000000)
 
 /* Primary oscillator */
 #define SYS_POSC_CLK_HZ	24000000
@@ -382,9 +386,44 @@ static ulong pic32_set_rate(struct clk *clk, ulong rate)
 	return rate;
 }
 
+#if IS_ENABLED(CONFIG_CMD_CLK)
+static void pic32_dump(struct udevice *dev)
+{
+	int i;
+	struct clk clk;
+
+	clk.dev = dev;
+
+	clk.id = PLLCLK;
+	printf("PLL Speed: %lu MHz\n",
+	       CLK_MHZ(pic32_get_rate(&clk)));
+
+	clk.id = PB7CLK;
+	printf("CPU Speed: %lu MHz\n", CLK_MHZ(pic32_get_rate(&clk)));
+
+	clk.id = MPLL;
+	printf("MPLL Speed: %lu MHz\n", CLK_MHZ(pic32_get_rate(&clk)));
+
+	for (i = PB1CLK; i <= PB7CLK; i++) {
+		clk.id = i;
+		printf("PB%d Clock Speed: %lu MHz\n", i - PB1CLK + 1,
+		       CLK_MHZ(pic32_get_rate(&clk)));
+	}
+
+	for (i = REF1CLK; i <= REF5CLK; i++) {
+		clk.id = i;
+		printf("REFO%d Clock Speed: %lu MHz\n", i - REF1CLK + 1,
+		       CLK_MHZ(pic32_get_rate(&clk)));
+	}
+}
+#endif
+
 static struct clk_ops pic32_pic32_clk_ops = {
 	.set_rate = pic32_set_rate,
 	.get_rate = pic32_get_rate,
+#if IS_ENABLED(CONFIG_CMD_CLK)
+	.dump = pic32_dump,
+#endif
 };
 
 static int pic32_clk_probe(struct udevice *dev)
@@ -419,8 +458,7 @@ U_BOOT_DRIVER(pic32_clk) = {
 	.name		= "pic32_clk",
 	.id		= UCLASS_CLK,
 	.of_match	= pic32_clk_ids,
-	.flags		= DM_FLAG_PRE_RELOC,
 	.ops		= &pic32_pic32_clk_ops,
 	.probe		= pic32_clk_probe,
-	.priv_auto_alloc_size = sizeof(struct pic32_clk_priv),
+	.priv_auto	= sizeof(struct pic32_clk_priv),
 };

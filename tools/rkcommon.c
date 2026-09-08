@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015 Google,  Inc
  * Written by Simon Glass <sjg@chromium.org>
  *
  * (C) 2017 Theobroma Systems Design und Consulting GmbH
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Helper functions for Rockchip images
  */
@@ -52,7 +51,7 @@ struct image_entry {
 };
 
 /**
- * struct header0_info_v2 - from rk35 on boot rom using the new header block
+ * struct header0_info_v2 - v2 header block for rockchip BootRom
  *
  * This is stored at SD card block 64 (where each block is 512 bytes)
  *
@@ -77,13 +76,29 @@ struct header0_info_v2 {
 /**
  * struct header0_info - header block for boot ROM
  *
- * This is stored at SD card block 64 (where each block is 512 bytes, or at
- * the start of SPI flash. It is encoded with RC4.
+ * This is stored at MMC block 64 (where each block is 512 bytes), or at
+ * the start of SPI flash. It is encoded with RC4 with the below rc4_key.
+ *
+ * In Rockchip terminology:
+ *
+ * "init" means the stage that is loaded into SRAM. TPL if there is one, SPL
+ * otherwise.
+ *
+ * "boot" means the next stages after "init" stage that are loaded by the
+ * BootROM into DRAM. Only applicable if "init" stage returns to BootROM (via
+ * the appropriate ROCKCHIP_BACK_TO_BROM symbol, BOOT_DEVICE_BOOTROM is used as
+ * boot device for the next stage and the "init" stage successfully booted) and
+ * if "init_boot_size" > "init_size".
+ * Basically, it is the content of "init" plus the SPL or even U-Boot proper if
+ * relevant.
  *
  * @magic:		Magic (must be RK_MAGIC)
  * @disable_rc4:	0 to use rc4 for boot image,  1 to use plain binary
- * @init_offset:	Offset in blocks of the SPL code from this header
- *			block. E.g. 4 means 2KB after the start of this header.
+ * @init_offset:	Offset in 512-byte blocks of the "init" code from the
+ *			start of this header. For instance, 4 means 2KiB.
+ * @init_size:		Size (in blocks) of the "init" code.
+ * @init_boot_size:	Size (in blocks) of the "init" and "boot" code combined.
+ *
  * Other fields are not used by U-Boot
  */
 struct header0_info {
@@ -98,7 +113,7 @@ struct header0_info {
 };
 
 /**
- * struct header1 info
+ * struct header1_info
  */
 struct header1_info {
 	uint32_t magic;
@@ -122,10 +137,10 @@ struct spl_info {
 };
 
 static struct spl_info spl_infos[] = {
+	{ "px30", "RK33", 0x2800, false, RK_HEADER_V1 },
 	{ "rk3036", "RK30", 0x1000, false, RK_HEADER_V1 },
-	{ "rk3066", "RK30", 0x8000, true, RK_HEADER_V1 },
-	{ "rk3128", "RK31", 0x2000 - 0x800, false, RK_HEADER_V1 },
-	{ "px3se", "RK31", 0x2000 - 0x800, false, RK_HEADER_V1 },
+	{ "rk3066", "RK30", 0x8000 - 0x800, true, RK_HEADER_V1 },
+	{ "rk3128", "RK31", 0x1800, false, RK_HEADER_V1 },
 	{ "rk3188", "RK31", 0x8000 - 0x800, true, RK_HEADER_V1 },
 	{ "rk322x", "RK32", 0x8000 - 0x1000, false, RK_HEADER_V1 },
 	{ "rk3288", "RK32", 0x8000, false, RK_HEADER_V1 },
@@ -133,13 +148,13 @@ static struct spl_info spl_infos[] = {
 	{ "rk3328", "RK32", 0x8000 - 0x800, false, RK_HEADER_V1 },
 	{ "rk3368", "RK33", 0x8000 - 0x1000, false, RK_HEADER_V1 },
 	{ "rk3399", "RK33", 0x30000 - 0x2000, false, RK_HEADER_V1 },
-	{ "rk3326", "RK33", 0x4000 - 0x1000, false, RK_HEADER_V1 },
-	{ "px30", "RK33", 0x4000 - 0x1000, false, RK_HEADER_V1 },
+	{ "rk3506", "RK35", 0xC000 - 0x1000, false, RK_HEADER_V2 },
+	{ "rk3528", "RK35", 0x10000 - 0x1000, false, RK_HEADER_V2 },
+	{ "rk3568", "RK35", 0x10000 - 0x1000, false, RK_HEADER_V2 },
+	{ "rk3576", "RK35", 0x80000 - 0x1000, false, RK_HEADER_V2 },
+	{ "rk3588", "RK35", 0x100000 - 0x1000, false, RK_HEADER_V2 },
 	{ "rv1108", "RK11", 0x1800, false, RK_HEADER_V1 },
 	{ "rv1126", "110B", 0x10000 - 0x1000, false, RK_HEADER_V1 },
-	{ "rk1808", "RK18", 0x200000 - 0x2000, false, RK_HEADER_V1 },
-	{ "rk3568", "RK35", 0x10000 - 0x1000, false, RK_HEADER_V2 },
-	{ "rk3588", "RK35", 0x100000 - 0x1000, false, RK_HEADER_V2 },
 };
 
 /**
@@ -160,7 +175,7 @@ struct spl_params {
 
 static struct spl_params spl_params = { 0 };
 
-static unsigned char rc4_key[16] = {
+static const unsigned char rc4_key[16] = {
 	124, 78, 3, 4, 85, 5, 9, 7,
 	45, 44, 123, 56, 23, 13, 23, 17
 };
@@ -190,14 +205,14 @@ static int rkcommon_get_aligned_size(struct image_tool_params *params,
 
 	/*
 	 * Pad to a 2KB alignment, as required for init/boot size by the ROM
-	 * (see https://lists.denx.de/pipermail/u-boot/2017-May/293268.html)
+	 * (see https://patch.msgid.link/CANbgqAQPw5Dxp7Qm_aZoL1nggg9Mm1SQoKvx=V5a8p-9+DTDNw@mail.gmail.com/)
 	 */
 	return ROUND(size, RK_SIZE_ALIGN);
 }
 
 int rkcommon_check_params(struct image_tool_params *params)
 {
-	int i;
+	int i, size;
 
 	/*
 	 * If this is a operation (list or extract), the don't require
@@ -217,17 +232,17 @@ int rkcommon_check_params(struct image_tool_params *params)
 		spl_params.boot_file += 1;
 	}
 
-	spl_params.init_size =
-		rkcommon_get_aligned_size(params, spl_params.init_file);
-	if (spl_params.init_size < 0)
+	size = rkcommon_get_aligned_size(params, spl_params.init_file);
+	if (size < 0)
 		return EXIT_FAILURE;
+	spl_params.init_size = size;
 
 	/* Boot file is optional, and only for back-to-bootrom functionality. */
 	if (spl_params.boot_file) {
-		spl_params.boot_size =
-			rkcommon_get_aligned_size(params, spl_params.boot_file);
-		if (spl_params.boot_size < 0)
+		size = rkcommon_get_aligned_size(params, spl_params.boot_file);
+		if (size < 0)
 			return EXIT_FAILURE;
+		spl_params.boot_size = size;
 	}
 
 	if (spl_params.init_size > rkcommon_get_spl_size(params)) {
@@ -281,13 +296,10 @@ bool rkcommon_need_rc4_spl(struct image_tool_params *params)
 	return info->spl_rc4;
 }
 
-bool rkcommon_is_header_v2(struct image_tool_params *params)
+static bool rkcommon_is_header_v2(struct image_tool_params *params)
 {
 	struct spl_info *info = rkcommon_get_spl_info(params->imagename);
 
-	/*
-	 * info would not be NULL, because of we checked params before.
-	 */
 	return (info->header_ver == RK_HEADER_V2);
 }
 
@@ -303,27 +315,27 @@ static void do_sha256_hash(uint8_t *buf, uint32_t size, uint8_t *out)
 static void rkcommon_set_header0(void *buf, struct image_tool_params *params)
 {
 	struct header0_info *hdr = buf;
+	uint32_t init_boot_size;
 
 	memset(buf, '\0', RK_INIT_OFFSET * RK_BLK_SIZE);
-	hdr->magic = RK_MAGIC;
-	hdr->disable_rc4 = !rkcommon_need_rc4_spl(params);
-	hdr->init_offset = RK_INIT_OFFSET;
-	hdr->init_size = spl_params.init_size / RK_BLK_SIZE;
+	hdr->magic = cpu_to_le32(RK_MAGIC);
+	hdr->disable_rc4 = cpu_to_le32(!rkcommon_need_rc4_spl(params));
+	hdr->init_offset = cpu_to_le16(RK_INIT_OFFSET);
+	hdr->init_size   = cpu_to_le16(spl_params.init_size / RK_BLK_SIZE);
 
 	/*
 	 * init_boot_size needs to be set, as it is read by the BootROM
 	 * to determine the size of the next-stage bootloader (e.g. U-Boot
 	 * proper), when used with the back-to-bootrom functionality.
 	 *
-	 * see https://lists.denx.de/pipermail/u-boot/2017-May/293267.html
+	 * see https://patch.msgid.link/CANbgqAQ5p-fE4T-Ye9UAMs-nRGU8AP_yxDf+5SbZbP8bxLa0dg@mail.gmail.com/
 	 * for a more detailed explanation by Andy Yan
 	 */
 	if (spl_params.boot_file)
-		hdr->init_boot_size =
-			hdr->init_size + spl_params.boot_size / RK_BLK_SIZE;
+		init_boot_size = spl_params.init_size + spl_params.boot_size;
 	else
-		hdr->init_boot_size =
-			hdr->init_size + RK_MAX_BOOT_SIZE / RK_BLK_SIZE;
+		init_boot_size = spl_params.init_size + RK_MAX_BOOT_SIZE;
+	hdr->init_boot_size = cpu_to_le16(init_boot_size / RK_BLK_SIZE);
 
 	rc4_encode(buf, RK_BLK_SIZE, rc4_key);
 }
@@ -336,7 +348,8 @@ static void rkcommon_set_header0_v2(void *buf, struct image_tool_params *params)
 	uint8_t *image_ptr = NULL;
 	int i;
 
-	printf("Image Type:   Rockchip %s boot image\n", rkcommon_get_spl_hdr(params));
+	printf("Image Type:   Rockchip %s boot image\n",
+		rkcommon_get_spl_hdr(params));
 	memset(buf, '\0', RK_INIT_OFFSET * RK_BLK_SIZE);
 	hdr->magic   = cpu_to_le32(RK_MAGIC_V2);
 	hdr->size_and_nimage = cpu_to_le32((2 << 16) + 384);
@@ -347,11 +360,13 @@ static void rkcommon_set_header0_v2(void *buf, struct image_tool_params *params)
 
 	for (i = 0; i < 2; i++) {
 		image_sector_count = image_size_array[i] / RK_BLK_SIZE;
-		hdr->images[i].size_and_off = cpu_to_le32((image_sector_count << 16) + sector_offset);
+		hdr->images[i].size_and_off = cpu_to_le32((image_sector_count
+							<< 16) + sector_offset);
 		hdr->images[i].address = 0xFFFFFFFF;
 		hdr->images[i].counter = cpu_to_le32(i + 1);
 		image_ptr = buf + sector_offset * RK_BLK_SIZE;
-		do_sha256_hash(image_ptr, image_size_array[i], hdr->images[i].hash);
+		do_sha256_hash(image_ptr, image_size_array[i],
+			       hdr->images[i].hash);
 		sector_offset = sector_offset + image_sector_count;
 	}
 
@@ -411,24 +426,26 @@ static int rkcommon_parse_header(const void *buf, struct header0_info *header0,
 	memcpy((void *)header0, buf, sizeof(struct header0_info));
 	rc4_encode((void *)header0, sizeof(struct header0_info), rc4_key);
 
-	if (header0->magic != RK_MAGIC)
+	if (le32_to_cpu(header0->magic) != RK_MAGIC)
 		return -EPROTO;
 
 	/* We don't support RC4 encoded image payloads here, yet... */
-	if (header0->disable_rc4 == 0)
+	if (le32_to_cpu(header0->disable_rc4) == 0)
 		return -ENOSYS;
 
-	hdr1_offset = header0->init_offset * RK_BLK_SIZE;
+	hdr1_offset = le16_to_cpu(header0->init_offset) * RK_BLK_SIZE;
 	hdr1_sdmmc = (struct header1_info *)(buf + hdr1_offset);
 	hdr1_spi = (struct header1_info *)(buf +
 					   rkcommon_offset_to_spi(hdr1_offset));
 
 	for (i = 0; i < ARRAY_SIZE(spl_infos); i++) {
-		if (!memcmp(&hdr1_sdmmc->magic, spl_infos[i].spl_hdr, 4)) {
+		if (!memcmp(&hdr1_sdmmc->magic, spl_infos[i].spl_hdr,
+			    RK_SPL_HDR_SIZE)) {
 			if (spl_info)
 				*spl_info = &spl_infos[i];
 			return IH_TYPE_RKSD;
-		} else if (!memcmp(&hdr1_spi->magic, spl_infos[i].spl_hdr, 4)) {
+		} else if (!memcmp(&hdr1_spi->magic, spl_infos[i].spl_hdr,
+				   RK_SPL_HDR_SIZE)) {
 			if (spl_info)
 				*spl_info = &spl_infos[i];
 			return IH_TYPE_RKSPI;
@@ -472,7 +489,7 @@ int rkcommon_verify_header(unsigned char *buf, int size,
 	 * If no 'imagename' is specified via the commandline (e.g. if this is
 	 * 'dumpimage -l' w/o any further constraints), we accept any spl_info.
 	 */
-	if (params->imagename == NULL)
+	if (params->imagename == NULL || !strlen(params->imagename))
 		return 0;
 
 	/* Match the 'imagename' against the 'spl_hdr' found */
@@ -483,7 +500,7 @@ int rkcommon_verify_header(unsigned char *buf, int size,
 	return -ENOENT;
 }
 
-void rkcommon_print_header(const void *buf)
+void rkcommon_print_header(const void *buf, struct image_tool_params *params)
 {
 	struct header0_info header0;
 	struct header0_info_v2 header0_v2;
@@ -518,6 +535,7 @@ void rkcommon_print_header(const void *buf)
 		image_type = ret;
 		init_size = header0.init_size * RK_BLK_SIZE;
 		boot_size = header0.init_boot_size * RK_BLK_SIZE - init_size;
+
 		printf("Image Type:   Rockchip %s (%s) boot image\n",
 		       spl_info->spl_hdr,
 		       (image_type == IH_TYPE_RKSD) ? "SD/MMC" : "SPI");

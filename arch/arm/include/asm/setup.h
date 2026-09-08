@@ -30,7 +30,7 @@
  *  - this structure is relatively short-lived - only
  *    guaranteed to contain useful data in setup_arch()
  */
-#define COMMAND_LINE_SIZE 2048
+#define COMMAND_LINE_SIZE 1024
 
 /* This is the old deprecated way to pass parameters to the kernel */
 struct param_struct {
@@ -74,7 +74,6 @@ struct param_struct {
     } u2;
     char commandline[COMMAND_LINE_SIZE];
 };
-
 
 /*
  * The new way of passing information: a list of tagged entries
@@ -235,7 +234,7 @@ struct tagtable {
 	int (*parse)(const struct tag *);
 };
 
-#define __tag __attribute__((unused, __section__(".taglist")))
+#define __tag __attribute__((unused)) __section(".taglist")
 #define __tagtable(tag, fn) \
 static struct tagtable __tagtable_##fn __tag = { tag, fn }
 

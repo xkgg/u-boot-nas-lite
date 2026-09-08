@@ -1,19 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Stefan Roese <sr@denx.de>
  * Copyright (C) 2016 Mario Six <mario.six@gdsys.cc>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <config.h>
+#include <command.h>
 #include <dm.h>
+#include <event.h>
+#include <init.h>
 #include <miiphy.h>
-#include <tpm.h>
+#include <net.h>
+#include <tpm-v1.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/arch/cpu.h>
 #include <asm-generic/gpio.h>
+#include <linux/delay.h>
 
-#include "../drivers/ddr/marvell/a38x/ddr3_a38x_topology.h"
+#include "../drivers/ddr/marvell/a38x/ddr3_init.h"
 #include "../arch/arm/mach-mvebu/serdes/a38x/high_speed_env_spec.h"
 
 #include "keyprogram.h"
@@ -22,10 +27,6 @@
 #include "ihs_phys.h"
 
 DECLARE_GLOBAL_DATA_PTR;
-
-#define ETH_PHY_CTRL_REG		0
-#define ETH_PHY_CTRL_POWER_DOWN_BIT	11
-#define ETH_PHY_CTRL_POWER_DOWN_MASK	(1 << ETH_PHY_CTRL_POWER_DOWN_BIT)
 
 #define DB_GP_88F68XX_GPP_OUT_ENA_LOW	0x7fffffff
 #define DB_GP_88F68XX_GPP_OUT_ENA_MID	0xffffefff
@@ -40,7 +41,8 @@ DECLARE_GLOBAL_DATA_PTR;
  * be used by the DDR3 init code in the SPL U-Boot version to configure
  * the DDR3 controller.
  */
-static struct hws_topology_map ddr_topology_map = {
+static struct mv_ddr_topology_map ddr_topology_map = {
+	DEBUG_LEVEL_ERROR,
 	0x1, /* active interfaces */
 	/* cs_mask, mirror, dqs_swap, ck_swap X PUPs */
 	{ { { {0x1, 0, 0, 0},
@@ -49,14 +51,18 @@ static struct hws_topology_map ddr_topology_map = {
 	      {0x1, 0, 0, 0},
 	      {0x1, 0, 0, 0} },
 	    SPEED_BIN_DDR_1600K,	/* speed_bin */
-	    BUS_WIDTH_16,		/* memory_width */
-	    MEM_4G,			/* mem_size */
-	    DDR_FREQ_533,		/* frequency */
-	    0, 0,			/* cas_l cas_wl */
-	    HWS_TEMP_LOW,		/* temperature */
-	    HWS_TIM_DEFAULT} },		/* timing */
-	5,				/* Num Of Bus Per Interface*/
-	BUS_MASK_32BIT			/* Busses mask */
+	    MV_DDR_DEV_WIDTH_16BIT,	/* memory_width */
+	    MV_DDR_DIE_CAP_4GBIT,	/* mem_size */
+	    MV_DDR_FREQ_533,		/* frequency */
+	    0, 0,			/* cas_wl cas_l */
+	    MV_DDR_TEMP_LOW,		/* temperature */
+	    MV_DDR_TIM_DEFAULT} },	/* timing */
+	BUS_MASK_32BIT,			/* Busses mask */
+	MV_DDR_CFG_DEFAULT,		/* ddr configuration data source */
+	NOT_COMBINED,			/* ddr twin-die combined */
+	{ {0} },			/* raw spd data */
+	{0}				/* timing parameters */
+
 };
 
 static struct serdes_map serdes_topology_map[] = {
@@ -76,11 +82,15 @@ int hws_board_topology_load(struct serdes_map **serdes_map_array, u8 *count)
 	return 0;
 }
 
-void board_pex_config(void)
+void spl_board_init(void)
 {
-#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_XPL_BUILD
 	uint k;
 	struct gpio_desc gpio = {};
+
+	/* Enable PCIe link 2 */
+	setbits_32(MVEBU_REGISTER(0x18204), BIT(2));
+	mdelay(10);
 
 	if (!request_gpio_by_name(&gpio, "pca9698@22", 31, "fpga-program-gpio")) {
 		/* prepare FPGA reconfiguration */
@@ -122,14 +132,14 @@ void board_pex_config(void)
 #endif
 }
 
-struct hws_topology_map *ddr3_get_topology_map(void)
+struct mv_ddr_topology_map *mv_ddr_topology_map_get(void)
 {
 	return &ddr_topology_map;
 }
 
 int board_early_init_f(void)
 {
-#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_XPL_BUILD
 	/* Configure MPP */
 	writel(0x00111111, MVEBU_MPP_BASE + 0x00);
 	writel(0x40040000, MVEBU_MPP_BASE + 0x04);
@@ -164,7 +174,7 @@ int board_init(void)
 	return 0;
 }
 
-#ifndef CONFIG_SPL_BUILD
+#ifndef CONFIG_XPL_BUILD
 void init_host_phys(struct mii_dev *bus)
 {
 	uint k;
@@ -172,11 +182,12 @@ void init_host_phys(struct mii_dev *bus)
 	for (k = 0; k < 2; ++k) {
 		struct phy_device *phydev;
 
-		phydev = phy_find_by_mask(bus, 1 << k,
-					  PHY_INTERFACE_MODE_SGMII);
+		phydev = phy_find_by_mask(bus, 1 << k);
 
-		if (phydev)
+		if (phydev) {
+			phydev->interface = PHY_INTERFACE_MODE_SGMII;
 			phy_config(phydev);
+		}
 	}
 }
 
@@ -230,7 +241,7 @@ int ccdc_eth_init(void)
 
 int board_late_init(void)
 {
-#ifndef CONFIG_SPL_BUILD
+#ifndef CONFIG_XPL_BUILD
 	hydra_initialize();
 #endif
 	return 0;
@@ -261,20 +272,33 @@ int board_fix_fdt(void *rw_fdt_blob)
 	return 0;
 }
 
-int last_stage_init(void)
+#ifndef CONFIG_XPL_BUILD
+static int last_stage_init(void)
 {
-#ifndef CONFIG_SPL_BUILD
+	struct udevice *tpm;
+	int ret;
+
+	if (IS_ENABLED(CONFIG_XPL_BUILD))
+		return 0;
 	ccdc_eth_init();
-#endif
-	if (tpm_init() || tpm_startup(TPM_ST_CLEAR) ||
-	    tpm_continue_self_test()) {
+
+	ret = uclass_first_device_err(UCLASS_TPM, &tpm);
+	if (ret) {
+		printf("Could not find TPM (ret=%d)\n", ret);
+		return ret;
+	}
+
+	if (ret || tpm_init(tpm) || tpm1_startup(tpm, TPM_ST_CLEAR) ||
+	    tpm1_continue_self_test(tpm)) {
 		return 1;
 	}
 
 	mdelay(37);
 
-	flush_keys();
-	load_and_run_keyprog();
+	flush_keys(tpm);
+	load_and_run_keyprog(tpm);
 
 	return 0;
 }
+EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, last_stage_init);
+#endif

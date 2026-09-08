@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2016 Texas Instruments, Inc.
- *
- * SPDX-License-Identifier: GPL-2.0+
  */
 
-#include <common.h>
+#include <config.h>
+#include <hang.h>
+#include <log.h>
 #include <linux/libfdt.h>
 #include <fdt_support.h>
 #include <malloc.h>
@@ -18,8 +19,8 @@
 #ifndef TI_OMAP5_SECURE_BOOT_RESV_SRAM_SZ
 #define TI_OMAP5_SECURE_BOOT_RESV_SRAM_SZ (0)
 #endif
-#ifndef CONFIG_SECURE_RUNTIME_RESV_SRAM_SZ
-#define CONFIG_SECURE_RUNTIME_RESV_SRAM_SZ (0)
+#ifndef CFG_SECURE_RUNTIME_RESV_SRAM_SZ
+#define CFG_SECURE_RUNTIME_RESV_SRAM_SZ (0)
 #endif
 
 static u32 hs_irq_skip[] = {
@@ -28,7 +29,7 @@ static u32 hs_irq_skip[] = {
 	118	/* One interrupt for Crypto DMA by secure world */
 };
 
-static int ft_hs_fixup_crossbar(void *fdt, bd_t *bd)
+static int ft_hs_fixup_crossbar(void *fdt, struct bd_info *bd)
 {
 	const char *path;
 	int offs;
@@ -91,8 +92,8 @@ static int ft_hs_fixup_crossbar(void *fdt, bd_t *bd)
 }
 
 #if ((TI_OMAP5_SECURE_BOOT_RESV_SRAM_SZ != 0) || \
-    (CONFIG_SECURE_RUNTIME_RESV_SRAM_SZ != 0))
-static int ft_hs_fixup_sram(void *fdt, bd_t *bd)
+    (CFG_SECURE_RUNTIME_RESV_SRAM_SZ != 0))
+static int ft_hs_fixup_sram(void *fdt, struct bd_info *bd)
 {
 	const char *path;
 	int offs;
@@ -115,7 +116,7 @@ static int ft_hs_fixup_sram(void *fdt, bd_t *bd)
 	temp[0] = cpu_to_fdt32(0);
 	/* reservation size */
 	temp[1] = cpu_to_fdt32(max(TI_OMAP5_SECURE_BOOT_RESV_SRAM_SZ,
-				   CONFIG_SECURE_RUNTIME_RESV_SRAM_SZ));
+				   CFG_SECURE_RUNTIME_RESV_SRAM_SZ));
 	fdt_delprop(fdt, offs, "reg");
 	ret = fdt_setprop(fdt, offs, "reg", temp, 2 * sizeof(u32));
 	if (ret < 0) {
@@ -127,10 +128,10 @@ static int ft_hs_fixup_sram(void *fdt, bd_t *bd)
 	return 0;
 }
 #else
-static int ft_hs_fixup_sram(void *fdt, bd_t *bd) { return 0; }
+static int ft_hs_fixup_sram(void *fdt, struct bd_info *bd) { return 0; }
 #endif
 
-static void ft_hs_fixups(void *fdt, bd_t *bd)
+static void ft_hs_fixups(void *fdt, struct bd_info *bd)
 {
 	/* Check we are running on an HS/EMU device type */
 	if (GP_DEVICE != get_device_type()) {
@@ -147,7 +148,7 @@ static void ft_hs_fixups(void *fdt, bd_t *bd)
 	hang();
 }
 #else
-static void ft_hs_fixups(void *fdt, bd_t *bd)
+static void ft_hs_fixups(void *fdt, struct bd_info *bd)
 {
 }
 #endif /* #ifdef CONFIG_TI_SECURE_DEVICE */
@@ -181,6 +182,14 @@ u32 dra7_opp_dsp_clk_rates[NUM_OPPS][OPP_DSP_CLK_NUM] = {
 	{750000000, 750000000, 500000000}, /* OPP_HIGH */
 };
 
+/* DSP clock rates on DRA76x ACD-package based SoCs */
+u32 dra76_opp_dsp_clk_rates[NUM_OPPS][OPP_DSP_CLK_NUM] = {
+	{}, /* OPP_LOW */
+	{600000000, 600000000, 400000000}, /* OPP_NOM */
+	{700000000, 700000000, 466666667}, /* OPP_OD */
+	{850000000, 850000000, 566666667}, /* OPP_HIGH */
+};
+
 /* IVA voltage domain */
 u32 dra7_opp_iva_clk_rates[NUM_OPPS][OPP_IVA_CLK_NUM] = {
 	{}, /* OPP_LOW */
@@ -197,12 +206,33 @@ u32 dra7_opp_gpu_clk_rates[NUM_OPPS][OPP_GPU_CLK_NUM] = {
 	{1064000000, 532000000}, /* OPP_HIGH */
 };
 
+static int fdt_clock_output_name_eq_(const void *fdt, int offset,
+				     const char *s, int len)
+{
+	int olen;
+	const char *p = fdt_getprop(fdt, offset, "clock-output-names", &olen);
+
+	if (!p)
+		/* short match */
+		return 0;
+
+	if (memcmp(p, s, len) != 0)
+		return 0;
+
+	if (p[len] == '\0')
+		return 1;
+	else
+		return 0;
+}
+
 static int ft_fixup_clocks(void *fdt, const char **names, u32 *rates, int num)
 {
-	int offs, node_offs, ret, i;
+	int offs, node_offs, subnode, ret, i;
 	uint32_t phandle;
 
-	offs = fdt_path_offset(fdt, "/ocp/l4@4a000000/cm_core_aon@5000/clocks");
+	offs = fdt_path_offset(fdt, "/ocp/interconnect@4a000000/segment@0/target-module@5000/cm_core_aon@0/clocks");
+	if (offs < 0)
+		offs = fdt_path_offset(fdt, "/ocp/l4@4a000000/cm_core_aon@5000/clocks");
 	if (offs < 0) {
 		debug("Could not find cm_core_aon clocks node path offset : %s\n",
 		      fdt_strerror(offs));
@@ -212,9 +242,19 @@ static int ft_fixup_clocks(void *fdt, const char **names, u32 *rates, int num)
 	for (i = 0; i < num; i++) {
 		node_offs = fdt_subnode_offset(fdt, offs, names[i]);
 		if (node_offs < 0) {
-			debug("Could not find clock sub-node %s: %s\n",
-			      names[i], fdt_strerror(node_offs));
-			return offs;
+			for (subnode = fdt_first_subnode(fdt, offs);
+			     subnode >= 0;
+			     subnode = fdt_next_subnode(fdt, subnode)) {
+				ret = fdt_clock_output_name_eq_(fdt, subnode, names[i],
+								strlen(names[i]));
+				if (ret)
+					node_offs = subnode;
+			}
+			if (node_offs < 0) {
+				debug("Could not find clock sub-node %s: %s\n",
+				      names[i], fdt_strerror(node_offs));
+				return offs;
+			}
 		}
 
 		phandle = fdt_get_phandle(fdt, node_offs);
@@ -244,7 +284,7 @@ static int ft_fixup_clocks(void *fdt, const char **names, u32 *rates, int num)
 	return 0;
 }
 
-static void ft_opp_clock_fixups(void *fdt, bd_t *bd)
+static void ft_opp_clock_fixups(void *fdt, struct bd_info *bd)
 {
 	const char **clk_names;
 	u32 *clk_rates;
@@ -256,6 +296,10 @@ static void ft_opp_clock_fixups(void *fdt, bd_t *bd)
 	/* fixup DSP clocks */
 	clk_names = dra7_opp_dsp_clk_names;
 	clk_rates = dra7_opp_dsp_clk_rates[get_voltrail_opp(VOLT_EVE)];
+	/* adjust for higher OPP_HIGH clock rate on DRA76xP/DRA77xP SoCs */
+	if (is_dra76x_acd())
+		clk_rates = dra76_opp_dsp_clk_rates[get_voltrail_opp(VOLT_EVE)];
+
 	ret = ft_fixup_clocks(fdt, clk_names, clk_rates, OPP_DSP_CLK_NUM);
 	if (ret) {
 		printf("ft_fixup_clocks failed for DSP voltage domain: %s\n",
@@ -284,7 +328,7 @@ static void ft_opp_clock_fixups(void *fdt, bd_t *bd)
 	}
 }
 #else
-static void ft_opp_clock_fixups(void *fdt, bd_t *bd) { }
+static void ft_opp_clock_fixups(void *fdt, struct bd_info *bd) { }
 #endif /* CONFIG_TARGET_DRA7XX_EVM || CONFIG_TARGET_AM57XX_EVM */
 
 /*
@@ -292,7 +336,7 @@ static void ft_opp_clock_fixups(void *fdt, bd_t *bd) { }
  * fixups should remain in the board files which is where
  * this function should be called from.
  */
-void ft_cpu_setup(void *fdt, bd_t *bd)
+void ft_cpu_setup(void *fdt, struct bd_info *bd)
 {
 	ft_hs_fixups(fdt, bd);
 	ft_opp_clock_fixups(fdt, bd);

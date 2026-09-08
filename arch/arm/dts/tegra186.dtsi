@@ -136,7 +136,7 @@
 		status = "disabled";
 	};
 
-	sdhci@3400000 {
+	mmc@3400000 {
 		compatible = "nvidia,tegra186-sdhci";
 		reg = <0x0 0x03400000 0x0 0x200>;
 		resets = <&bpmp TEGRA186_RESET_SDMMC1>;
@@ -146,7 +146,7 @@
 		status = "disabled";
 	};
 
-	sdhci@3460000 {
+	mmc@3460000 {
 		compatible = "nvidia,tegra186-sdhci";
 		reg = <0x0 0x03460000 0x0 0x200>;
 		resets = <&bpmp TEGRA186_RESET_SDMMC4>;
@@ -217,7 +217,7 @@
 		#interrupt-cells = <2>;
 	};
 
-	pcie-controller@10003000 {
+	pcie@10003000 {
 		compatible = "nvidia,tegra186-pcie";
 		device_type = "pci";
 		reg = <0x0 0x10003000 0x0 0x00000800   /* PADS registers */
@@ -334,5 +334,10 @@
 			#size-cells = <0>;
 			status = "disabled";
 		};
+	};
+
+	psci {
+		compatible = "arm,psci-1.0";
+		method = "smc";
 	};
 };

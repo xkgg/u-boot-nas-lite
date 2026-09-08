@@ -1,14 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2007
  * Nobuhiro Iwamatsu <iwamatsu@nigauri.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <command.h>
+#include <irq_func.h>
+#include <cpu_func.h>
+#include <net.h>
 #include <netdev.h>
 #include <asm/processor.h>
+#include <asm/system.h>
+
+void reset_cpu(void)
+{
+	/* Address error with SR.BL=1 first. */
+	trigger_address_error();
+
+	while (1)
+		;
+}
 
 int checkcpu(void)
 {
@@ -27,14 +38,14 @@ int cleanup_before_linux (void)
 	return 0;
 }
 
-int do_reset (cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_reset(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	disable_interrupts();
-	reset_cpu (0);
+	reset_cpu();
 	return 0;
 }
 
-int cpu_eth_init(bd_t *bis)
+int cpu_eth_init(struct bd_info *bis)
 {
 #ifdef CONFIG_SH_ETHER
 	sh_eth_initialize(bis);

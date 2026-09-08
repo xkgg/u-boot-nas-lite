@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2009-2016 CompuLab, Ltd.
  *
  * Authors: Nikita Kiryanov <nikita@compulab.co.il>
  *	    Igor Grinberg <grinberg@compulab.co.il>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
+#include <stdio.h>
+#include <vsprintf.h>
 #include <linux/string.h>
 #include <eeprom_field.h>
 
@@ -56,8 +56,8 @@ static int __eeprom_field_update_bin(struct eeprom_field *field,
 			tmp[k] = value[reverse ? i - 1 + k : i + k];
 		}
 
-		byte = simple_strtoul(tmp, &endptr, 0);
-		if (*endptr != '\0' || byte < 0)
+		byte = simple_strtoul(tmp, &endptr, 16);
+		if (*endptr != '\0')
 			return -1;
 
 		field->buf[j] = byte;

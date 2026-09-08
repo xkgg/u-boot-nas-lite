@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 1994, 1995 Waldorf GmbH
  * Copyright (C) 1994 - 2000, 06 Ralf Baechle
  * Copyright (C) 1999, 2000 Silicon Graphics, Inc.
  * Copyright (C) 2004, 2005  MIPS Technologies, Inc.  All rights reserved.
  *	Author: Maciej W. Rozycki <macro@mips.com>
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 #ifndef _ASM_IO_H
 #define _ASM_IO_H
@@ -17,6 +16,7 @@
 #include <asm/addrspace.h>
 #include <asm/byteorder.h>
 #include <asm/cpu-features.h>
+#include <asm/global_data.h>
 #include <asm/pgtable-bits.h>
 #include <asm/processor.h>
 #include <asm/string.h>
@@ -95,6 +95,7 @@ static inline unsigned long virt_to_phys(volatile const void *address)
 #endif
 	return CPHYSADDR(addr);
 }
+#define virt_to_phys virt_to_phys
 
 /*
  *     phys_to_virt    -       map physical address to virtual
@@ -112,6 +113,7 @@ static inline void *phys_to_virt(unsigned long address)
 {
 	return (void *)(address + PAGE_OFFSET - PHYS_OFFSET);
 }
+#define phys_to_virt phys_to_virt
 
 /*
  * ISA I/O bus memory addresses are 1:1 with the physical address.
@@ -334,6 +336,22 @@ BUILDIO_MEM(b, u8)
 BUILDIO_MEM(w, u16)
 BUILDIO_MEM(l, u32)
 BUILDIO_MEM(q, u64)
+#define __raw_readb __raw_readb
+#define __raw_readw __raw_readw
+#define __raw_readl __raw_readl
+#define __raw_readq __raw_readq
+#define __raw_writeb __raw_writeb
+#define __raw_writew __raw_writew
+#define __raw_writel __raw_writel
+#define __raw_writeq __raw_writeq
+#define readb readb
+#define readw readw
+#define readl readl
+#define readq readq
+#define writeb writeb
+#define writew writew
+#define writel writel
+#define writeq writeq
 
 #define __BUILD_IOPORT_PFX(bus, bwlq, type)				\
 	__BUILD_IOPORT_SINGLE(bus, bwlq, type, )			\
@@ -403,7 +421,8 @@ static inline void writes##bwlq(volatile void __iomem *mem,		\
 	}								\
 }									\
 									\
-static inline void reads##bwlq(volatile void __iomem *mem, void *addr,	\
+static inline void reads##bwlq(const volatile void __iomem *mem,	\
+				void *addr,				\
 			       unsigned int count)			\
 {									\
 	volatile type *__addr = addr;					\
@@ -446,10 +465,25 @@ __BUILD_IOPORT_STRING(bwlq, type)
 BUILDSTRING(b, u8)
 BUILDSTRING(w, u16)
 BUILDSTRING(l, u32)
+#define readsb readsb
+#define readsw readsw
+#define readsl readsl
+#define writesb writesb
+#define writesw writesw
+#define writesl writesl
+#define outsb outsb
+#define outsw outsw
+#define outsl outsl
+#define insb insb
+#define insw insw
+#define insl insl
 #ifdef CONFIG_64BIT
 BUILDSTRING(q, u64)
+#define readsq readsq
+#define writesq writesq
+#define insq insq
+#define outsq outsq
 #endif
-
 
 #ifdef CONFIG_CPU_CAVIUM_OCTEON
 #define mmiowb() wmb()
@@ -490,10 +524,7 @@ static inline void memcpy_toio(volatile void __iomem *dst, const void *src, int 
  */
 #define sync()		mmiowb()
 
-#define MAP_NOCACHE	(1)
-#define MAP_WRCOMBINE	(0)
-#define MAP_WRBACK	(0)
-#define MAP_WRTHROUGH	(0)
+#define MAP_NOCACHE	1
 
 static inline void *
 map_physmem(phys_addr_t paddr, unsigned long len, unsigned long flags)
@@ -503,13 +534,7 @@ map_physmem(phys_addr_t paddr, unsigned long len, unsigned long flags)
 
 	return (void *)CKSEG0ADDR(paddr);
 }
-
-/*
- * Take down a mapping set up by map_physmem().
- */
-static inline void unmap_physmem(void *vaddr, unsigned long flags)
-{
-}
+#define map_physmem map_physmem
 
 #define __BUILD_CLRBITS(bwlq, sfx, end, type)				\
 									\
@@ -555,6 +580,28 @@ __BUILD_CLRSETBITS(bwlq, sfx, end, type)
 #define __to_cpu(v)		(v)
 #define cpu_to__(v)		(v)
 
+#define out_arch(type, endian, a, v)	__raw_write##type(cpu_to_##endian(v),a)
+#define in_arch(type, endian, a)	endian##_to_cpu(__raw_read##type(a))
+
+#define out_le64(a, v)	out_arch(q, le64, a, v)
+#define out_le32(a, v)	out_arch(l, le32, a, v)
+#define out_le16(a, v)	out_arch(w, le16, a, v)
+
+#define in_le64(a)	in_arch(q, le64, a)
+#define in_le32(a)	in_arch(l, le32, a)
+#define in_le16(a)	in_arch(w, le16, a)
+
+#define out_be64(a, v)	out_arch(q, be64, a, v)
+#define out_be32(a, v)	out_arch(l, be32, a, v)
+#define out_be16(a, v)	out_arch(w, be16, a, v)
+
+#define in_be64(a)	in_arch(q, be64, a)
+#define in_be32(a)	in_arch(l, be32, a)
+#define in_be16(a)	in_arch(w, be16, a)
+
+#define out_8(a, v)	__raw_writeb(v, a)
+#define in_8(a)		__raw_readb(a)
+
 BUILD_CLRSETBITS(b, 8, _, u8)
 BUILD_CLRSETBITS(w, le16, le16, u16)
 BUILD_CLRSETBITS(w, be16, be16, u16)
@@ -565,5 +612,7 @@ BUILD_CLRSETBITS(l, 32, _, u32)
 BUILD_CLRSETBITS(q, le64, le64, u64)
 BUILD_CLRSETBITS(q, be64, be64, u64)
 BUILD_CLRSETBITS(q, 64, _, u64)
+
+#include <asm-generic/io.h>
 
 #endif /* _ASM_IO_H */

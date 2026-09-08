@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000-2009
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
-#include <common.h>
 #include <bootm.h>
 #include <command.h>
+#include <image.h>
+#include <irq_func.h>
 #include <lmb.h>
+#include <log.h>
 #include <linux/compiler.h>
 
 int __weak bootz_setup(ulong image, ulong *start, ulong *end)
@@ -22,22 +23,32 @@ int __weak bootz_setup(ulong image, ulong *start, ulong *end)
 /*
  * zImage booting support
  */
-static int bootz_start(cmd_tbl_t *cmdtp, int flag, int argc,
-			char * const argv[], bootm_headers_t *images)
+static int bootz_start(struct cmd_tbl *cmdtp, int flag, int argc,
+		       char *const argv[], struct bootm_headers *images)
 {
-	int ret;
 	ulong zi_start, zi_end;
+	struct bootm_info bmi;
+	phys_addr_t ep_addr;
+	int ret;
 
-	ret = do_bootm_states(cmdtp, flag, argc, argv, BOOTM_STATE_START,
-			      images, 1);
+	bootm_init(&bmi);
+	if (argc)
+		bmi.addr_img = argv[0];
+	if (argc > 1)
+		bmi.conf_ramdisk = argv[1];
+	if (argc > 2)
+		bmi.conf_fdt = argv[2];
+	/* do not set up argc and argv[] since nothing uses them */
+
+	ret = bootm_run_states(&bmi, BOOTM_STATE_START);
 
 	/* Setup Linux kernel zImage entry point */
 	if (!argc) {
-		images->ep = load_addr;
+		images->ep = image_load_addr;
 		debug("*  kernel: default image load address = 0x%08lx\n",
-				load_addr);
+				image_load_addr);
 	} else {
-		images->ep = simple_strtoul(argv[0], NULL, 16);
+		images->ep = hextoul(argv[0], NULL);
 		debug("*  kernel: cmdline image address = 0x%08lx\n",
 			images->ep);
 	}
@@ -46,20 +57,30 @@ static int bootz_start(cmd_tbl_t *cmdtp, int flag, int argc,
 	if (ret != 0)
 		return 1;
 
-	lmb_reserve(&images->lmb, images->ep, zi_end - zi_start);
+	ep_addr = (phys_addr_t)images->ep;
+	ret = lmb_alloc_mem(LMB_MEM_ALLOC_ADDR, 0, &ep_addr, zi_end - zi_start,
+			    LMB_NONE);
+	if (ret) {
+		printf("Failed to allocate memory for the image at %#llx\n",
+		       (unsigned long long)images->ep);
+		return 1;
+	}
 
 	/*
 	 * Handle the BOOTM_STATE_FINDOTHER state ourselves as we do not
 	 * have a header that provide this informaiton.
 	 */
-	if (bootm_find_images(flag, argc, argv))
+	if (bootm_find_images(image_load_addr, cmd_arg1(argc, argv),
+			      cmd_arg2(argc, argv), images->ep,
+			      zi_end - zi_start))
 		return 1;
 
 	return 0;
 }
 
-int do_bootz(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_bootz(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
+	struct bootm_info bmi;
 	int ret;
 
 	/* Consume 'bootz' */
@@ -75,19 +96,22 @@ int do_bootz(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	bootm_disable_interrupts();
 
 	images.os.os = IH_OS_LINUX;
-	ret = do_bootm_states(cmdtp, flag, argc, argv,
-#ifdef CONFIG_SYS_BOOT_RAMDISK_HIGH
-			      BOOTM_STATE_RAMDISK |
-#endif
-			      BOOTM_STATE_OS_PREP | BOOTM_STATE_OS_FAKE_GO |
-			      BOOTM_STATE_OS_GO,
-			      &images, 1);
+
+	bootm_init(&bmi);
+	if (argc)
+		bmi.addr_img = argv[0];
+	if (argc > 1)
+		bmi.conf_ramdisk = argv[1];
+	if (argc > 2)
+		bmi.conf_fdt = argv[2];
+	bmi.cmd_name = "bootz";
+
+	ret = bootz_run(&bmi);
 
 	return ret;
 }
 
-#ifdef CONFIG_SYS_LONGHELP
-static char bootz_help_text[] =
+U_BOOT_LONGHELP(bootz,
 	"[addr [initrd[:size]] [fdt]]\n"
 	"    - boot Linux zImage stored in memory\n"
 	"\tThe argument 'initrd' is optional and specifies the address\n"
@@ -100,8 +124,7 @@ static char bootz_help_text[] =
 	"\tuse a '-' for the second argument. If you do not pass a third\n"
 	"\ta bd_info struct will be passed instead\n"
 #endif
-	"";
-#endif
+	);
 
 U_BOOT_CMD(
 	bootz,	CONFIG_SYS_MAXARGS,	1,	do_bootz,

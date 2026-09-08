@@ -1,12 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * (C) Copyright 2017 Heiko Stuebner <heiko@sntech.de>
  * (C) Copyright 2017 Theobroma Systems Design und Consulting GmbH
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #ifndef _ASM_ARCH_BOOTROM_H
 #define _ASM_ARCH_BOOTROM_H
+
+#include <linux/types.h>
 
 /*
  * Saved Stack pointer address.
@@ -30,9 +31,9 @@ extern u32 SAVE_SP_ADDR;
  */
 enum rockchip_bootrom_cmd {
 	/*
-	* These can not start at 0, as 0 has a special meaning
-	* for setjmp().
-	*/
+	 * These can not start at 0, as 0 has a special meaning
+	 * for setjmp().
+	 */
 
 	BROM_BOOT_NEXTSTAGE = 1,  /* continue boot-sequence */
 	BROM_BOOT_ENTER_DNL,      /* have BROM enter download-mode */
@@ -50,6 +51,7 @@ enum {
 	BROM_BOOTSOURCE_SPINOR = 3,
 	BROM_BOOTSOURCE_SPINAND = 4,
 	BROM_BOOTSOURCE_SD = 5,
+	BROM_BOOTSOURCE_UFS = 7,
 	BROM_BOOTSOURCE_I2C = 8,
 	BROM_BOOTSOURCE_SPI = 9,
 	BROM_BOOTSOURCE_USB = 10,
@@ -61,7 +63,8 @@ extern const char * const boot_devices[BROM_LAST_BOOTSOURCE + 1];
 /**
  * Locations of the boot-device identifier in SRAM
  */
-#define BROM_BOOTSOURCE_ID_ADDR (CONFIG_ROCKCHIP_IRAM_START_ADDR + 0x10)
+#define BROM_BOOTSOURCE_ID_ADDR   (CFG_IRAM_BASE + 0x10)
 
+u32 read_brom_bootsource_id(void);
 
 #endif

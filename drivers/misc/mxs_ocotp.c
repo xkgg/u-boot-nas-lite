@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Freescale i.MX28 OCOTP Driver
  *
  * Copyright (C) 2014 Marek Vasut <marex@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Note: The i.MX23/i.MX28 OCOTP block is a predecessor to the OCOTP block
  *       used in i.MX6 . While these blocks are very similar at the first
@@ -12,8 +11,8 @@
  *       etc.) which would make common driver an ifdef nightmare :-(
  */
 
-#include <common.h>
 #include <fuse.h>
+#include <linux/delay.h>
 #include <linux/errno.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>

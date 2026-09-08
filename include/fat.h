@@ -1,19 +1,19 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * R/O (V)FAT 12/16/32 filesystem implementation by Marcus Sundberg
  *
  * 2002-07-28 - rjones@nexus-tech.net - ported to ppcboot v1.1.6
  * 2003-03-10 - kharris@nexus-tech.net - ported to u-boot
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _FAT_H_
 #define _FAT_H_
 
-#include <asm/byteorder.h>
 #include <fs.h>
+#include <asm/byteorder.h>
 
-#define CONFIG_SUPPORT_VFAT
+struct disk_partition;
+
 /* Maximum Long File Name length supported here is 128 UTF-16 code units */
 #define VFAT_MAXLEN_BYTES	256 /* Maximum LFN buffer in bytes */
 #define VFAT_MAXSEQ		9   /* Up to 9 of 13 2-byte UTF-16 entries */
@@ -21,7 +21,6 @@
 
 #define MAX_CLUSTSIZE	CONFIG_FS_FAT_MAX_CLUSTSIZE
 
-#define DIRENTSPERBLOCK	(mydata->sect_size / sizeof(dir_entry))
 #define DIRENTSPERCLUST	((mydata->clust_size * mydata->sect_size) / \
 			 sizeof(dir_entry))
 
@@ -33,12 +32,6 @@
 
 /* Maximum number of entry for long file name according to spec */
 #define MAX_LFN_SLOT	20
-
-/* Filesystem identifiers */
-#define FAT12_SIGN	"FAT12   "
-#define FAT16_SIGN	"FAT16   "
-#define FAT32_SIGN	"FAT32   "
-#define SIGNLEN		8
 
 /* File attributes */
 #define ATTR_RO	1
@@ -132,8 +125,13 @@ typedef struct volume_info
 #define CASE_LOWER_BASE	8	/* base (name) is lower case */
 #define CASE_LOWER_EXT	16	/* extension is lower case */
 
+struct nameext {
+	char name[8];
+	char ext[3];
+};
+
 typedef struct dir_entry {
-	char	name[8],ext[3];	/* Name and extension */
+	struct nameext nameext;	/* Name and extension */
 	__u8	attr;		/* Attribute bits */
 	__u8	lcase;		/* Case for name and ext (CASE_LOWER_x) */
 	__u8	ctime_ms;	/* Creation time, milliseconds */
@@ -167,7 +165,9 @@ typedef struct {
 	int	fatsize;	/* Size of FAT in bits */
 	__u32	fatlength;	/* Length of FAT in sectors */
 	__u16	fat_sect;	/* Starting sector of the FAT */
+#ifdef CONFIG_FAT_WRITE
 	__u8	fat_dirty;      /* Set if fatbuf has been modified */
+#endif
 	__u32	rootdir_sect;	/* Start sector of root directory */
 	__u16	sect_size;	/* Size of sectors in bytes */
 	__u16	clust_size;	/* Size of clusters in sectors */
@@ -175,25 +175,52 @@ typedef struct {
 	int	fatbufnum;	/* Used by get_fatent, init to -1 */
 	int	rootdir_size;	/* Size of root dir for non-FAT32 */
 	__u32	root_cluster;	/* First cluster of root dir for FAT32 */
+	u32	total_sect;	/* Number of sectors */
+	int	fats;		/* Number of FATs */
 } fsdata;
+
+struct fat_itr;
+typedef struct fat_itr fat_itr;
 
 static inline u32 clust_to_sect(fsdata *fsdata, u32 clust)
 {
 	return fsdata->data_begin + clust * fsdata->clust_size;
 }
 
-static inline u32 sect_to_clust(fsdata *fsdata, u32 sect)
+static inline u32 sect_to_clust(fsdata *fsdata, int sect)
 {
 	return (sect - fsdata->data_begin) / fsdata->clust_size;
+}
+
+static inline void fat_mark_clean(fsdata *fsdata)
+{
+#ifdef CONFIG_FAT_WRITE
+	fsdata->fat_dirty = 0;
+#endif
+}
+
+static inline void fat_mark_dirty(fsdata *fsdata)
+{
+#ifdef CONFIG_FAT_WRITE
+	fsdata->fat_dirty = 1;
+#endif
+}
+
+static inline bool fat_is_dirty(fsdata *fsdata)
+{
+#ifdef CONFIG_FAT_WRITE
+	if (fsdata->fat_dirty)
+		return true;
+#endif
+
+	return false;
 }
 
 int file_fat_detectfs(void);
 int fat_exists(const char *filename);
 int fat_size(const char *filename, loff_t *size);
-int file_fat_read_at(const char *filename, loff_t pos, void *buffer,
-		     loff_t maxsize, loff_t *actread);
 int file_fat_read(const char *filename, void *buffer, int maxsize);
-int fat_set_blk_dev(struct blk_desc *rbdd, disk_partition_t *info);
+int fat_set_blk_dev(struct blk_desc *rbdd, struct disk_partition *info);
 int fat_register_device(struct blk_desc *dev_desc, int part_no);
 
 int file_fat_write(const char *filename, void *buf, loff_t offset, loff_t len,
@@ -203,5 +230,21 @@ int fat_read_file(const char *filename, void *buf, loff_t offset, loff_t len,
 int fat_opendir(const char *filename, struct fs_dir_stream **dirsp);
 int fat_readdir(struct fs_dir_stream *dirs, struct fs_dirent **dentp);
 void fat_closedir(struct fs_dir_stream *dirs);
+int fat_unlink(const char *filename);
+int fat_rename(const char *old_path, const char *new_path);
+int fat_mkdir(const char *dirname);
 void fat_close(void);
+void *fat_next_cluster(fat_itr *itr, unsigned int *nbytes);
+
+/**
+ * fat_uuid() - get FAT volume ID
+ *
+ * The FAT volume ID returned in @uuid_str as hexadecimal number in XXXX-XXXX
+ * format.
+ *
+ * @uuid_str:	caller allocated buffer of at least 10 bytes for the volume ID
+ * Return:	0 on success
+ */
+int fat_uuid(char *uuid_str);
+
 #endif /* _FAT_H_ */

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -43,7 +42,6 @@ typedef struct mac_driver_entry {
 	__u16	size;		/* size of driver, in 512 byte blocks	*/
 	__u16	type;		/* OS Type				*/
 } mac_driver_entry_t;
-
 
 #define MAC_PARTITION_MAGIC	0x504d
 

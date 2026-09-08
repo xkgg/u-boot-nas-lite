@@ -5,7 +5,6 @@
  * Copyright 1992, Linus Torvalds.
  */
 
-
 /*
  * These have to be done with inline assembly: that way the bit-setting
  * is guaranteed to be atomic. All bit operations return 0 if the bit
@@ -60,6 +59,8 @@ static __inline__ void __set_bit(int nr, volatile void * addr)
 		:"=m" (ADDR)
 		:"Ir" (nr));
 }
+
+#define PLATFORM__SET_BIT
 
 /**
  * clear_bit - Clears a bit in memory

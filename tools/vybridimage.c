@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Image manipulator for Vybrid SoCs
  *
@@ -5,8 +6,6 @@
  *
  * (C) Copyright 2016  DENX Software Engineering GmbH
  * Written-by: Albert ARIBAUD <albert.aribaud@3adev.fr>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include "imagetool.h"
@@ -135,7 +134,7 @@ static void vybridimage_print_hdr_field(struct nand_page_0_boot_header *hdr,
 	printf("header.fcb[%d] = %08x\n", idx, hdr->fcb[idx]);
 }
 
-static void vybridimage_print_header(const void *ptr)
+static void vybridimage_print_header(const void *ptr, struct image_tool_params *params)
 {
 	struct nand_page_0_boot_header *hdr =
 		(struct nand_page_0_boot_header *)ptr;

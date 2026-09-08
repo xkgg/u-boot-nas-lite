@@ -1,18 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2012 Linutronix GmbH
  * Copyright (c) 2014 sigma star gmbh
  * Author: Richard Weinberger <richard@nod.at>
  *
- * SPDX-License-Identifier:	GPL-2.0+
- *
  */
 
 #ifndef __UBOOT__
+#include <log.h>
+#include <dm/devres.h>
 #include <linux/crc32.h>
+#include <linux/err.h>
+#include <u-boot/crc.h>
 #else
 #include <div64.h>
 #include <malloc.h>
 #include <ubi_uboot.h>
+#include <linux/bug.h>
 #endif
 
 #include <linux/compat.h>
@@ -100,7 +104,6 @@ size_t ubi_calc_fm_size(struct ubi_device *ubi)
 		sizeof(struct ubi_fm_volhdr) * UBI_MAX_VOLUMES;
 	return roundup(size, ubi->leb_size);
 }
-
 
 /**
  * new_fm_vhdr - allocate a new volume header for fastmap usage.
@@ -578,13 +581,11 @@ static int count_fastmap_pebs(struct ubi_attach_info *ai)
 	struct ubi_ainf_peb *aeb;
 	struct ubi_ainf_volume *av;
 	struct rb_node *rb1, *rb2;
-	int n = 0;
+	int n;
 
-	list_for_each_entry(aeb, &ai->erase, u.list)
-		n++;
+	n = list_count_nodes(&ai->erase);
 
-	list_for_each_entry(aeb, &ai->free, u.list)
-		n++;
+	n += list_count_nodes(&ai->free);
 
 	 ubi_rb_for_each_entry(rb1, av, &ai->volumes, rb)
 		ubi_rb_for_each_entry(rb2, aeb, &av->root, u.rb)
@@ -675,7 +676,6 @@ static int ubi_attach_fastmap(struct ubi_device *ubi,
 		ubi_err(ubi, "bad WL pool size: %i", wl_pool_size);
 		goto fail_bad;
 	}
-
 
 	if (fm->max_pool_size > UBI_FM_MAX_POOL_SIZE ||
 	    fm->max_pool_size < 0) {
@@ -1236,7 +1236,6 @@ static int ubi_write_fastmap(struct ubi_device *ubi,
 		ubi_assert(fm_pos <= ubi->fm_size);
 	}
 	fmh->scrub_peb_count = cpu_to_be32(scrub_peb_count);
-
 
 	list_for_each_entry(ubi_wrk, &ubi->works, list) {
 		if (ubi_is_erase_work(ubi_wrk)) {

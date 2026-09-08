@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  *  (C) Copyright 2010-2014
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _TEGRA_CLK_RST_H_
@@ -175,8 +174,7 @@ struct clk_rst_ctlr {
 	uint crc_audio_sync_clk_i2s4;	/* _AUDIO_SYNC_CLK_I2S4_0, 0x4B0 */
 	uint crc_audio_sync_clk_spdif;	/* _AUDIO_SYNC_CLK_SPDIF_0, 0x4B4 */
 
-	uint crc_plld2_base;		/* _PLLD2_BASE_0, 0x4B8 */
-	uint crc_plld2_misc;		/* _PLLD2_MISC_0, 0x4BC */
+	struct clk_pll_simple plld2;	/* _PLLD2_BASE_0, 0x4B8 */
 	uint crc_utmip_pll_cfg3;	/* _UTMIP_PLL_CFG3_0, 0x4C0 */
 	uint crc_pllrefe_base;		/* _PLLREFE_BASE_0, 0x4C4 */
 	uint crc_pllrefe_misc;		/* _PLLREFE_MISC_0, 0x4C8 */

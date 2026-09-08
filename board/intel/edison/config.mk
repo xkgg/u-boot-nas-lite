@@ -1,18 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0+ OR BSD-3-Clause
 #
 # Copyright (c) 2011 The Chromium OS Authors. All rights reserved.
 # Copyright (c) 2017 Intel Corporation
-#
-# SPDX-License-Identifier:	GPL-2.0	BSD-3-Clause
 #
 
 # Add 4096 bytes of zeroes to u-boot.bin
 quiet_cmd_mkalign_eds = EDSALGN $@
 cmd_mkalign_eds =							\
-	dd if=$^ of=$@ bs=4k seek=1 2>/dev/null &&			\
-	mv $@ $^
+	dd if=$< of=$@ bs=4k seek=1 2>/dev/null &&			\
+	mv $@ $<
 
-ALL-y += u-boot-align.bin
-u-boot-align.bin: u-boot.bin
+INPUTS-y += u-boot-align.bin
+u-boot-align.bin: u-boot.bin FORCE
 	$(call if_changed,mkalign_eds)
 
-HOSTCFLAGS_autoconf.mk.dep = -Wno-variadic-macros
+HOSTCFLAGS_include/autoconf.mk.dep = -Wno-variadic-macros

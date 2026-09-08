@@ -1,11 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright 2010-2011 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
-#include <common.h>
+#include <hang.h>
+#include <init.h>
 #include <asm/fsl_lbc.h>
+
+#ifdef CONFIG_MPC83xx
+#include "../mpc83xx/elbc/elbc.h"
+#endif
 
 #ifdef CONFIG_MPC85xx
 /* Boards should provide their own version of this if they use lbc sdram */
@@ -15,7 +19,6 @@ static void __lbc_sdram_init(void)
 }
 void lbc_sdram_init(void) __attribute__((weak, alias("__lbc_sdram_init")));
 #endif
-
 
 void print_lbc_regs(void)
 {

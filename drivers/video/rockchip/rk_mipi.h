@@ -1,7 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2017, Fuzhou Rockchip Electronics Co., Ltd
  * Author: Eric Gao <eric.gao@rock-chips.com>
- * SPDX-License-Identifier: GPL-2.0+
  */
 
 #ifndef __RK_MIPI_H
@@ -27,6 +27,5 @@ int rk_mipi_dsi_enable(struct udevice *dev,
 			      const struct display_timing *timing);
 
 int rk_mipi_phy_enable(struct udevice *dev);
-
 
 #endif

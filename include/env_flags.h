@@ -1,19 +1,20 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2012
  * Joe Hershberger, National Instruments, joe.hershberger@ni.com
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __ENV_FLAGS_H__
 #define __ENV_FLAGS_H__
+
+#include <config.h>
 
 enum env_flags_vartype {
 	env_flags_vartype_string,
 	env_flags_vartype_decimal,
 	env_flags_vartype_hex,
 	env_flags_vartype_bool,
-#ifdef CONFIG_CMD_NET
+#if CONFIG_IS_ENABLED(NET)
 	env_flags_vartype_ipaddr,
 	env_flags_vartype_macaddr,
 #endif
@@ -25,6 +26,9 @@ enum env_flags_varaccess {
 	env_flags_varaccess_readonly,
 	env_flags_varaccess_writeonce,
 	env_flags_varaccess_changedefault,
+#ifdef CONFIG_ENV_WRITEABLE_LIST
+	env_flags_varaccess_writeable,
+#endif
 	env_flags_varaccess_end
 };
 
@@ -33,20 +37,20 @@ enum env_flags_varaccess {
 #define ENV_FLAGS_VARTYPE_LOC 0
 #define ENV_FLAGS_VARACCESS_LOC 1
 
-#ifndef CONFIG_ENV_FLAGS_LIST_STATIC
-#define CONFIG_ENV_FLAGS_LIST_STATIC ""
+#ifndef CFG_ENV_FLAGS_LIST_STATIC
+#define CFG_ENV_FLAGS_LIST_STATIC ""
 #endif
 
-#ifdef CONFIG_CMD_NET
+#if CONFIG_IS_ENABLED(NET)
 #ifdef CONFIG_REGEX
-#define ETHADDR_WILDCARD "\\d?"
+#define ETHADDR_WILDCARD "\\d*"
 #else
 #define ETHADDR_WILDCARD
 #endif
 #ifdef CONFIG_ENV_OVERWRITE
 #define ETHADDR_FLAGS "eth" ETHADDR_WILDCARD "addr:ma,"
 #else
-#ifdef CONFIG_OVERWRITE_ETHADDR_ONCE
+#ifdef CONFIG_ENV_OVERWRITE_ETHADDR_ONCE
 #define ETHADDR_FLAGS "eth" ETHADDR_WILDCARD "addr:mc,"
 #else
 #define ETHADDR_FLAGS "eth" ETHADDR_WILDCARD "addr:mo,"
@@ -65,6 +69,15 @@ enum env_flags_varaccess {
 #define NET_FLAGS
 #endif
 
+#ifdef CONFIG_IPV6
+#define NET6_FLAGS \
+	"ip6addr:s," \
+	"serverip6:s," \
+	"gatewayip6:s,"
+#else
+#define NET6_FLAGS
+#endif
+
 #ifndef CONFIG_ENV_OVERWRITE
 #define SERIAL_FLAGS "serial#:so,"
 #else
@@ -74,8 +87,9 @@ enum env_flags_varaccess {
 #define ENV_FLAGS_LIST_STATIC \
 	ETHADDR_FLAGS \
 	NET_FLAGS \
+	NET6_FLAGS \
 	SERIAL_FLAGS \
-	CONFIG_ENV_FLAGS_LIST_STATIC
+	CFG_ENV_FLAGS_LIST_STATIC
 
 #ifdef CONFIG_CMD_ENV_FLAGS
 /*
@@ -109,7 +123,7 @@ enum env_flags_varaccess env_flags_parse_varaccess(const char *flags);
  */
 enum env_flags_varaccess env_flags_parse_varaccess_from_binflags(int binflags);
 
-#ifdef CONFIG_CMD_NET
+#if CONFIG_IS_ENABLED(NET)
 /*
  * Check if a string has the format of an Ethernet MAC address
  */
@@ -147,19 +161,20 @@ int env_flags_validate_env_set_params(char *name, char *const val[], int count);
 
 #else /* !USE_HOSTCC */
 
+#include <env.h>
 #include <search.h>
 
 /*
  * When adding a variable to the environment, initialize the flags for that
  * variable.
  */
-void env_flags_init(ENTRY *var_entry);
+void env_flags_init(struct env_entry *var_entry);
 
 /*
  * Validate the newval for to conform with the requirements defined by its flags
  */
-int env_flags_validate(const ENTRY *item, const char *newval, enum env_op op,
-	int flag);
+int env_flags_validate(const struct env_entry *item, const char *newval,
+		       enum env_op op, int flag);
 
 #endif /* USE_HOSTCC */
 
@@ -173,6 +188,7 @@ int env_flags_validate(const ENTRY *item, const char *newval, enum env_op op,
 #define ENV_FLAGS_VARACCESS_PREVENT_CREATE		0x00000010
 #define ENV_FLAGS_VARACCESS_PREVENT_OVERWR		0x00000020
 #define ENV_FLAGS_VARACCESS_PREVENT_NONDEF_OVERWR	0x00000040
-#define ENV_FLAGS_VARACCESS_BIN_MASK			0x00000078
+#define ENV_FLAGS_VARACCESS_WRITEABLE			0x00000080
+#define ENV_FLAGS_VARACCESS_BIN_MASK			0x000000f8
 
 #endif /* __ENV_FLAGS_H__ */

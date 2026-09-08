@@ -1,17 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2013 Bo Shen <voice.shen@atmel.com>
  *
  * Copyright (C) 2009 Jens Scharsig (js_at_ng@scharsoft.de)
  *
  *  Copyright (C) 2005 HP Labs
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
-#include <common.h>
 #include <clk.h>
 #include <dm.h>
+#include <malloc.h>
 #include <asm/io.h>
 #include <linux/sizes.h>
 #include <asm/gpio.h>
@@ -211,7 +210,7 @@ int at91_pio3_set_d_periph(unsigned port, unsigned pin, int use_pullup)
 	return 0;
 }
 
-#ifdef CONFIG_DM_GPIO
+#if CONFIG_IS_ENABLED(DM_GPIO)
 static bool at91_get_port_output(struct at91_port *at91_port, int offset)
 {
 	u32 mask, val;
@@ -219,6 +218,44 @@ static bool at91_get_port_output(struct at91_port *at91_port, int offset)
 	mask = 1 << offset;
 	val = readl(&at91_port->osr);
 	return val & mask;
+}
+
+static bool at91_is_port_gpio(struct at91_port *at91_port, int offset)
+{
+	u32 mask, val;
+
+	mask = 1 << offset;
+	val = readl(&at91_port->psr);
+	return !!(val & mask);
+}
+
+static void at91_set_port_multi_drive(struct at91_port *at91_port, int offset, int is_on)
+{
+	u32 mask;
+
+	mask = 1 << offset;
+	if (is_on)
+		writel(mask, &at91_port->mder);
+	else
+		writel(mask, &at91_port->mddr);
+}
+
+static bool at91_get_port_multi_drive(struct at91_port *at91_port, int offset)
+{
+	u32 mask, val;
+
+	mask = 1 << offset;
+	val = readl(&at91_port->mdsr);
+	return !!(val & mask);
+}
+
+static bool at91_get_port_pullup(struct at91_port *at91_port, int offset)
+{
+	u32 mask, val;
+
+	mask = 1 << offset;
+	val = readl(&at91_port->pusr);
+	return !(val & mask);
 }
 #endif
 
@@ -458,7 +495,7 @@ int at91_get_pio_value(unsigned port, unsigned pin)
 	return 0;
 }
 
-#ifndef CONFIG_DM_GPIO
+#if !CONFIG_IS_ENABLED(DM_GPIO)
 /* Common GPIO API */
 
 int gpio_request(unsigned gpio, const char *label)
@@ -500,7 +537,7 @@ int gpio_set_value(unsigned gpio, int value)
 }
 #endif
 
-#ifdef CONFIG_DM_GPIO
+#if CONFIG_IS_ENABLED(DM_GPIO)
 
 struct at91_port_priv {
 	struct at91_port *regs;
@@ -550,11 +587,88 @@ static int at91_gpio_get_function(struct udevice *dev, unsigned offset)
 {
 	struct at91_port_priv *port = dev_get_priv(dev);
 
-	/* GPIOF_FUNC is not implemented yet */
+	if (!at91_is_port_gpio(port->regs, offset))
+		return GPIOF_FUNC;
+
 	if (at91_get_port_output(port->regs, offset))
 		return GPIOF_OUTPUT;
 	else
 		return GPIOF_INPUT;
+}
+
+static int at91_gpio_set_flags(struct udevice *dev, unsigned int offset,
+			       ulong flags)
+{
+	struct at91_port_priv *port = dev_get_priv(dev);
+	ulong supported_mask;
+
+	supported_mask = GPIOD_OPEN_DRAIN | GPIOD_MASK_DIR | GPIOD_PULL_UP;
+	if (flags & ~supported_mask)
+		return -ENOTSUPP;
+
+	if (flags & GPIOD_IS_OUT) {
+		if (flags & GPIOD_OPEN_DRAIN)
+			at91_set_port_multi_drive(port->regs, offset, true);
+		else
+			at91_set_port_multi_drive(port->regs, offset, false);
+
+		at91_set_port_output(port->regs, offset, flags & GPIOD_IS_OUT_ACTIVE);
+
+	} else if (flags & GPIOD_IS_IN) {
+		at91_set_port_input(port->regs, offset, false);
+	}
+	if (flags & GPIOD_PULL_UP)
+		at91_set_port_pullup(port->regs, offset, true);
+
+	return 0;
+}
+
+static int at91_gpio_get_flags(struct udevice *dev, unsigned int offset,
+			       ulong *flagsp)
+{
+	struct at91_port_priv *port = dev_get_priv(dev);
+	ulong dir_flags = 0;
+
+	if (at91_get_port_output(port->regs, offset)) {
+		dir_flags |= GPIOD_IS_OUT;
+
+		if (at91_get_port_multi_drive(port->regs, offset))
+			dir_flags |= GPIOD_OPEN_DRAIN;
+
+		if (at91_get_port_value(port->regs, offset))
+			dir_flags |= GPIOD_IS_OUT_ACTIVE;
+	} else {
+		dir_flags |= GPIOD_IS_IN;
+	}
+
+	if (at91_get_port_pullup(port->regs, offset))
+		dir_flags |= GPIOD_PULL_UP;
+
+	*flagsp = dir_flags;
+
+	return 0;
+}
+
+static const char *at91_get_bank_name(uint32_t base_addr)
+{
+	switch (base_addr) {
+	case ATMEL_BASE_PIOA:
+		return "PIOA";
+	case ATMEL_BASE_PIOB:
+		return "PIOB";
+	case ATMEL_BASE_PIOC:
+		return "PIOC";
+#if (ATMEL_PIO_PORTS > 3)
+	case ATMEL_BASE_PIOD:
+		return "PIOD";
+#if (ATMEL_PIO_PORTS > 4)
+	case ATMEL_BASE_PIOE:
+		return "PIOE";
+#endif
+#endif
+	}
+
+	return "undefined";
 }
 
 static const struct dm_gpio_ops gpio_at91_ops = {
@@ -563,12 +677,14 @@ static const struct dm_gpio_ops gpio_at91_ops = {
 	.get_value		= at91_gpio_get_value,
 	.set_value		= at91_gpio_set_value,
 	.get_function		= at91_gpio_get_function,
+	.set_flags		= at91_gpio_set_flags,
+	.get_flags		= at91_gpio_get_flags,
 };
 
 static int at91_gpio_probe(struct udevice *dev)
 {
 	struct at91_port_priv *port = dev_get_priv(dev);
-	struct at91_port_platdata *plat = dev_get_platdata(dev);
+	struct at91_port_plat *plat = dev_get_plat(dev);
 	struct gpio_dev_priv *uc_priv = dev_get_uclass_priv(dev);
 	struct clk clk;
 	int ret;
@@ -581,15 +697,14 @@ static int at91_gpio_probe(struct udevice *dev)
 	if (ret)
 		return ret;
 
-	clk_free(&clk);
+#if CONFIG_IS_ENABLED(OF_CONTROL)
+	plat->base_addr = dev_read_addr(dev);
+#endif
+	plat->bank_name = at91_get_bank_name(plat->base_addr);
+	port->regs = (struct at91_port *)plat->base_addr;
 
 	uc_priv->bank_name = plat->bank_name;
 	uc_priv->gpio_count = GPIO_PER_BANK;
-
-#if CONFIG_IS_ENABLED(OF_CONTROL)
-	plat->base_addr = (uint32_t)devfdt_get_addr_ptr(dev);
-#endif
-	port->regs = (struct at91_port *)plat->base_addr;
 
 	return 0;
 }
@@ -601,15 +716,15 @@ static const struct udevice_id at91_gpio_ids[] = {
 };
 #endif
 
-U_BOOT_DRIVER(gpio_at91) = {
-	.name	= "gpio_at91",
+U_BOOT_DRIVER(atmel_at91rm9200_gpio) = {
+	.name	= "atmel_at91rm9200_gpio",
 	.id	= UCLASS_GPIO,
 #if CONFIG_IS_ENABLED(OF_CONTROL)
 	.of_match = at91_gpio_ids,
-	.platdata_auto_alloc_size = sizeof(struct at91_port_platdata),
+	.plat_auto	= sizeof(struct at91_port_plat),
 #endif
 	.ops	= &gpio_at91_ops,
 	.probe	= at91_gpio_probe,
-	.priv_auto_alloc_size = sizeof(struct at91_port_priv),
+	.priv_auto	= sizeof(struct at91_port_priv),
 };
 #endif
