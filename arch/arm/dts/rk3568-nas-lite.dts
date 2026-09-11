@@ -146,6 +146,10 @@
 	status = "okay";
 };
 
+&pcie30phy {
+	status = "okay";
+};
+
 &saradc {
 	vdd-microvolts = <1800000>;
 	status = "okay";
@@ -188,6 +192,10 @@
 };
 
 &usb_host1_xhci {
+	status = "okay";
+};
+
+&combphy1 {
 	status = "okay";
 };
 
