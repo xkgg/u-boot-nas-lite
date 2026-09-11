@@ -6,12 +6,16 @@
 #include <adc.h>
 #include <command.h>
 #include <env.h>
+#include <fdtdec.h>
 #include <log.h>
 #include <asm/io.h>
 #include <asm/arch-rockchip/boot_mode.h>
+#include <asm/global_data.h>
 #include <dm/device.h>
 #include <dm/uclass.h>
 #include <linux/printk.h>
+
+DECLARE_GLOBAL_DATA_PTR;
 
 #if (CONFIG_ROCKCHIP_BOOT_MODE_REG == 0)
 
@@ -37,9 +41,26 @@ void set_back_to_bootrom_dnl_flag(void)
 #define KEY_DOWN_MIN_VAL	0
 #define KEY_DOWN_MAX_VAL	30
 
+#if CONFIG_IS_ENABLED(ADC)
+static unsigned int rockchip_dnl_key_channel(void)
+{
+	const void *blob = gd->fdt_blob;
+	u32 channels[2];
+	int node;
+
+	node = fdt_node_offset_by_compatible(blob, 0, "adc-keys");
+	if (node >= 0 &&
+	    !fdtdec_get_int_array(blob, node, "io-channels", channels, 2))
+		return channels[1];
+
+	return 1;
+}
+#endif
+
 __weak int rockchip_dnl_key_pressed(void)
 {
 #if CONFIG_IS_ENABLED(ADC)
+	unsigned int channel;
 	unsigned int val;
 	struct udevice *dev;
 	struct uclass *uc;
@@ -49,10 +70,11 @@ __weak int rockchip_dnl_key_pressed(void)
 	if (ret)
 		return false;
 
+	channel = rockchip_dnl_key_channel();
 	ret = -ENODEV;
 	uclass_foreach_dev(dev, uc) {
 		if (!strncmp(dev->name, "saradc", 6)) {
-			ret = adc_channel_single_shot(dev->name, 1, &val);
+			ret = adc_channel_single_shot(dev->name, channel, &val);
 			break;
 		}
 	}
@@ -77,9 +99,14 @@ __weak int rockchip_dnl_key_pressed(void)
 void rockchip_dnl_mode_check(void)
 {
 	if (rockchip_dnl_key_pressed()) {
+#if CONFIG_IS_ENABLED(ROCKCHIP_RECOVERY_ROCKUSB)
+		printf("download key pressed, entering RockUSB mode...\n");
+		run_command("rockusb 0 mmc 0", 0);
+#else
 		printf("download key pressed, entering download mode...");
 		set_back_to_bootrom_dnl_flag();
 		do_reset(NULL, 0, 0, NULL);
+#endif
 	}
 }
 

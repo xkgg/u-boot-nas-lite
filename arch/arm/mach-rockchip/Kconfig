@@ -658,6 +658,14 @@ config ROCKCHIP_BOOT_MODE_REG
 	  The Soc will enter to different boot mode(defined in asm/arch-rockchip/boot_mode.h)
 	  according to the value from this register.
 
+config ROCKCHIP_RECOVERY_ROCKUSB
+	bool "Enter RockUSB when the recovery key is held"
+	depends on CMD_ROCKUSB && ADC && SARADC_ROCKCHIP
+	help
+	  Enter the U-Boot RockUSB gadget when the board download/recovery key
+	  is held during power-on. This avoids relying on a BootROM download
+	  hand-off for boards whose recovery key is only available in U-Boot.
+
 config ROCKCHIP_RK8XX_DISABLE_BOOT_ON_POWERON
 	bool "Disable device boot on power plug-in"
 	depends on PMIC_RK8XX

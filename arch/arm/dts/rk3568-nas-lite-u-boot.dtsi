@@ -113,3 +113,7 @@
 &usb2phy0_host {
 	bootph-pre-ram;
 };
+
+&usb2phy0_otg {
+	bootph-pre-ram;
+};

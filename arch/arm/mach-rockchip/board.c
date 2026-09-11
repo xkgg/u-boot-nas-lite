@@ -221,10 +221,15 @@ void enable_caches(void)
 
 int g_dnl_bind_fixup(struct usb_device_descriptor *dev, const char *name)
 {
-	if (!strcmp(name, "usb_dnl_ums"))
+	if (!strcmp(name, "usb_dnl_rockusb")) {
+		dev->idVendor = cpu_to_le16(0x2207);
+		dev->idProduct = cpu_to_le16(CONFIG_USB_GADGET_PRODUCT_NUM);
+		dev->bcdUSB = cpu_to_le16(0x0201);
+	} else if (!strcmp(name, "usb_dnl_ums")) {
 		put_unaligned(ROCKCHIP_G_DNL_UMS_PRODUCT_NUM, &dev->idProduct);
-	else
+	} else {
 		put_unaligned(CONFIG_USB_GADGET_PRODUCT_NUM, &dev->idProduct);
+	}
 
 	return 0;
 }

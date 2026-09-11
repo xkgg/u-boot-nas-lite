@@ -1,7 +1,9 @@
-# U-Boot 2026.07 NAS Lite port
+# U-Boot 2026.07 NODKA NK-6A12 V10 port
 
 This directory is based on the official U-Boot `v2026.07` release and carries
 the RK3568 NAS Lite board support from the source tree in the parent directory.
+The target hardware is the NODKA NK-6A12 V10 RK3568 board; the historical
+`nas-lite` filename is retained to preserve the existing image and build flow.
 
 ## Ported board files
 
@@ -31,6 +33,24 @@ The parent tree's optional DG/vendor display adaptation is not included in the
 default NAS Lite build because `rk3568-nas-lite.dts` does not reference it.  Its
 original files remain available in the parent tree for a separate display
 adaptation port.
+
+## Recovery / RockUSB
+
+The NK-6A12 V10 manual identifies the bottom blue connector as `USB 3.0/OTG`
+and the `Return/KEY` input as the recovery-capable button. The extracted board
+device tree connects that key to SARADC channel 0. This configuration therefore
+enables the SARADC driver, uses channel 0 from `adc-keys`, and starts U-Boot's
+RockUSB gadget on the OTG port when the key is held during power-on.
+
+1. Connect a data-capable USB cable between the host PC and the blue
+   `USB 3.0/OTG` port before powering the board.
+2. Hold the `Return/Recovery` key and apply power.
+3. Serial output should show `download key pressed, entering RockUSB mode...`.
+   RockUSB exposes the eMMC as `mmc 0` to RKDevTool/upgrade_tool.
+
+If no USB cable is present, the RockUSB command exits and normal U-Boot boot
+continues. This deliberately does not write the BootROM download flag or reset
+the board, avoiding the previous recovery-key reboot loop.
 
 ## Build on a Linux/AArch64 host
 

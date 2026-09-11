@@ -1,0 +1,12 @@
+if TARGET_NAS_LITE
+
+config SYS_BOARD
+	default "nas_lite"
+
+config SYS_VENDOR
+	default "rockchip"
+
+config SYS_CONFIG_NAME
+	default "nas_lite"
+
+endif

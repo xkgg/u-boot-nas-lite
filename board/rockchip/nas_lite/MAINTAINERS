@@ -1,0 +1,7 @@
+NAS LITE RK3568
+M:      NAS Lite U-Boot contributors
+S:      Maintained
+F:      board/rockchip/nas_lite
+F:      include/configs/nas_lite.h
+F:      configs/rk3568-nas-lite_defconfig
+F:      arch/arm/dts/rk3568-nas-lite*

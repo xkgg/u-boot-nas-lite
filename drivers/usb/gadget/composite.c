@@ -1048,10 +1048,16 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 			cdev->desc.bMaxPacketSize0 =
 				cdev->gadget->ep0->maxpacket;
 			if (gadget->speed >= USB_SPEED_SUPER) {
-				cdev->desc.bcdUSB = cpu_to_le16(0x0310);
+				if (!strcmp(cdev->driver->name, "usb_dnl_rockusb"))
+					cdev->desc.bcdUSB = cpu_to_le16(0x0301);
+				else
+					cdev->desc.bcdUSB = cpu_to_le16(0x0310);
 				cdev->desc.bMaxPacketSize0 = 9;
 			} else {
-				cdev->desc.bcdUSB = cpu_to_le16(0x0200);
+				if (!strcmp(cdev->driver->name, "usb_dnl_rockusb"))
+					cdev->desc.bcdUSB = cpu_to_le16(0x0201);
+				else
+					cdev->desc.bcdUSB = cpu_to_le16(0x0200);
 			}
 			value = min(w_length, (u16) sizeof cdev->desc);
 			memcpy(req->buf, &cdev->desc, value);
@@ -1087,7 +1093,8 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 			 * also issues this request, return for now for
 			 * USB 2.0 connection.
 			 */
-			if (gadget->speed >= USB_SPEED_SUPER) {
+			if (gadget->speed >= USB_SPEED_SUPER ||
+			    !strcmp(cdev->driver->name, "usb_dnl_rockusb")) {
 				value = bos_desc(cdev);
 				value = min(w_length, (u16)value);
 			}

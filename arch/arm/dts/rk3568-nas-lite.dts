@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Rockchip RK3568 NAS Lite board description.
+ * NODKA NK-6A12 V10 RK3568 board description.
  *
  * The common SoC description comes from the Linux kernel device-tree
  * sources shipped with U-Boot 2026.07.  U-Boot-only boot-phase annotations
@@ -15,8 +15,9 @@
 #include <dt-bindings/input/input.h>
 
 / {
-	model = "Rockchip RK3568 NAS Lite";
-	compatible = "rockchip,rk3568-nas-lite", "rockchip,rk3568";
+	model = "NODKA NK-6A12 V10";
+	compatible = "nodka,nk-6a12-v10", "rockchip,rk3568-nas-lite",
+		     "rockchip,rk3568";
 
 	nandc0: nandc@fe330000 {
 		compatible = "rockchip,rk-nandc";
@@ -129,6 +130,11 @@
 	status = "okay";
 };
 
+&saradc {
+	vdd-microvolts = <1800000>;
+	status = "okay";
+};
+
 &sfc {
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -157,7 +163,11 @@
 };
 
 &usb_host0_xhci {
-	dr_mode = "host";
+	dr_mode = "peripheral";
+	extcon = <&usb2phy0>;
+	maximum-speed = "high-speed";
+	phys = <&usb2phy0_otg>;
+	phy-names = "usb2-phy";
 	status = "okay";
 };
 
@@ -166,5 +176,9 @@
 };
 
 &usb2phy0_host {
+	status = "okay";
+};
+
+&usb2phy0_otg {
 	status = "okay";
 };
