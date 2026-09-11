@@ -19,6 +19,16 @@
 	compatible = "nodka,nk-6a12-v10", "rockchip,rk3568-nas-lite",
 		     "rockchip,rk3568";
 
+	pcie3v3: regulator-pcie-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_pcie";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		enable-active-high;
+		gpio = <&gpio0 RK_PD4 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <5000>;
+	};
+
 	nandc0: nandc@fe330000 {
 		compatible = "rockchip,rk-nandc";
 		reg = <0x0 0xfe330000 0x0 0x4000>;
@@ -130,6 +140,12 @@
 	status = "okay";
 };
 
+&pcie3x2 {
+	reset-gpios = <&gpio2 RK_PD6 GPIO_ACTIVE_HIGH>;
+	vpcie3v3-supply = <&pcie3v3>;
+	status = "okay";
+};
+
 &saradc {
 	vdd-microvolts = <1800000>;
 	status = "okay";
@@ -171,6 +187,26 @@
 	status = "okay";
 };
 
+&usb_host1_xhci {
+	status = "okay";
+};
+
+&usb_host0_ehci {
+	status = "okay";
+};
+
+&usb_host0_ohci {
+	status = "okay";
+};
+
+&usb_host1_ehci {
+	status = "okay";
+};
+
+&usb_host1_ohci {
+	status = "okay";
+};
+
 &usb2phy0 {
 	status = "okay";
 };
@@ -180,5 +216,17 @@
 };
 
 &usb2phy0_otg {
+	status = "okay";
+};
+
+&usb2phy1 {
+	status = "okay";
+};
+
+&usb2phy1_host {
+	status = "okay";
+};
+
+&usb2phy1_otg {
 	status = "okay";
 };
